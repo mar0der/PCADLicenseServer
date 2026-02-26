@@ -6,6 +6,7 @@ import { User } from "@prisma/client";
 export default function UsersClient({ initialUsers }: { initialUsers: User[] }) {
     const [users, setUsers] = useState<User[]>(initialUsers);
     const [newUsername, setNewUsername] = useState("");
+    const [newAccessLevel, setNewAccessLevel] = useState(1);
     const [isAdding, setIsAdding] = useState(false);
 
     const handleAddUser = async (e: React.FormEvent) => {
@@ -17,7 +18,7 @@ export default function UsersClient({ initialUsers }: { initialUsers: User[] }) 
             const res = await fetch("/api/admin/users", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ username: newUsername.trim() }),
+                body: JSON.stringify({ username: newUsername.trim(), accessLevel: newAccessLevel }),
             });
 
             if (res.ok) {
@@ -51,6 +52,23 @@ export default function UsersClient({ initialUsers }: { initialUsers: User[] }) 
         }
     };
 
+    const changeAccessLevel = async (id: string, newLevel: number) => {
+        try {
+            const res = await fetch("/api/admin/users", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id, accessLevel: newLevel }),
+            });
+
+            if (res.ok) {
+                const updatedUser = await res.json();
+                setUsers(users.map(u => (u.id === id ? updatedUser : u)));
+            }
+        } catch (error) {
+            console.error("Failed to update access level", error);
+        }
+    };
+
     const deleteUser = async (id: string) => {
         if (!confirm("Are you sure you want to delete this user?")) return;
 
@@ -81,6 +99,15 @@ export default function UsersClient({ initialUsers }: { initialUsers: User[] }) 
                         className="flex-1 h-10 rounded-md border border-neutral-600 bg-neutral-700 px-3 py-2 text-sm text-white placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         required
                     />
+                    <select
+                        value={newAccessLevel}
+                        onChange={(e) => setNewAccessLevel(Number(e.target.value))}
+                        className="h-10 rounded-md border border-neutral-600 bg-neutral-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                        <option value={1}>User</option>
+                        <option value={2}>Tester</option>
+                        <option value={3}>Boss</option>
+                    </select>
                     <button
                         type="submit"
                         disabled={isAdding}
@@ -97,6 +124,7 @@ export default function UsersClient({ initialUsers }: { initialUsers: User[] }) 
                     <thead className="text-xs text-neutral-400 uppercase bg-neutral-900/50 border-b border-neutral-700">
                         <tr>
                             <th className="px-6 py-4 font-medium">Username</th>
+                            <th className="px-6 py-4 font-medium">Role</th>
                             <th className="px-6 py-4 font-medium">Status</th>
                             <th className="px-6 py-4 font-medium">Machine Name</th>
                             <th className="px-6 py-4 font-medium">Last Login</th>
@@ -106,7 +134,7 @@ export default function UsersClient({ initialUsers }: { initialUsers: User[] }) 
                     <tbody>
                         {users.length === 0 ? (
                             <tr>
-                                <td colSpan={5} className="px-6 py-8 text-center text-neutral-500">
+                                <td colSpan={6} className="px-6 py-8 text-center text-neutral-500">
                                     No users found.
                                 </td>
                             </tr>
@@ -114,6 +142,17 @@ export default function UsersClient({ initialUsers }: { initialUsers: User[] }) 
                             users.map((user) => (
                                 <tr key={user.id} className="border-b border-neutral-700 hover:bg-neutral-700/30 transition-colors">
                                     <td className="px-6 py-4 font-medium text-white">{user.username}</td>
+                                    <td className="px-6 py-4">
+                                        <select
+                                            value={user.accessLevel}
+                                            onChange={(e) => changeAccessLevel(user.id, Number(e.target.value))}
+                                            className="bg-transparent border border-neutral-600 rounded px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                        >
+                                            <option value={1} className="bg-neutral-800">User</option>
+                                            <option value={2} className="bg-neutral-800">Tester</option>
+                                            <option value={3} className="bg-neutral-800">Boss</option>
+                                        </select>
+                                    </td>
                                     <td className="px-6 py-4">
                                         <span
                                             className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${user.isActive ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"

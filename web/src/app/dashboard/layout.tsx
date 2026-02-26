@@ -34,6 +34,12 @@ export default async function DashboardLayout({
                         <Link href="/dashboard/logs" className="flex items-center space-x-3 px-4 py-2.5 rounded-lg text-neutral-300 hover:bg-neutral-800 hover:text-white transition-colors">
                             <span className="text-sm font-medium">Usage Logs</span>
                         </Link>
+                        <Link href="/dashboard/commands" className="flex items-center space-x-3 px-4 py-2.5 rounded-lg text-neutral-300 hover:bg-neutral-800 hover:text-white transition-colors">
+                            <span className="text-sm font-medium">Commands</span>
+                        </Link>
+                        <Link href="/dashboard/alerts" className="flex items-center space-x-3 px-4 py-2.5 rounded-lg text-neutral-300 hover:bg-neutral-800 hover:text-white transition-colors">
+                            <span className="text-sm font-medium">Security Alerts</span>
+                        </Link>
                         <Link href="/dashboard/settings" className="flex items-center space-x-3 px-4 py-2.5 rounded-lg text-neutral-300 hover:bg-neutral-800 hover:text-white transition-colors">
                             <span className="text-sm font-medium">Settings</span>
                         </Link>

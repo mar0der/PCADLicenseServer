@@ -8,6 +8,7 @@ generator client {
 
 datasource db {
   provider = "sqlite"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -15,6 +16,7 @@ model User {
   username           String   @unique
   machineName        String?  
   isActive           Boolean  @default(true)
+  accessLevel        Int      @default(1) // 1=User, 2=Tester, 3=Boss
   createdAt          DateTime @default(now())
   lastLogin          DateTime?
   lastRevitVersion   String?
@@ -38,4 +40,11 @@ model FailedAttempt {
   machineName  String?
   reason       String?
   timestamp    DateTime @default(now())
+}
+
+model Command {
+  id                  String   @id @default(uuid())
+  uniqueName          String   @unique
+  descriptiveName     String
+  requiredAccessLevel Int      @default(1) // 1=User, 2=Tester, 3=Boss
 }

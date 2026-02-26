@@ -59,7 +59,7 @@ export async function POST(req: Request) {
         });
 
         return NextResponse.json(
-            { allowed: true, message: 'Access granted' },
+            { allowed: true, accessLevel: user.accessLevel, message: 'Access granted' },
             { status: 200 }
         );
 

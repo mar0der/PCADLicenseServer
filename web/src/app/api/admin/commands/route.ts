@@ -8,20 +8,22 @@ export async function POST(req: Request) {
     if (!session) return new NextResponse("Unauthorized", { status: 401 });
 
     try {
-        const { username, isActive, accessLevel } = await req.json();
-        if (!username) return new NextResponse("Username required", { status: 400 });
+        const { uniqueName, descriptiveName, requiredAccessLevel } = await req.json();
+        if (!uniqueName || !descriptiveName) {
+            return new NextResponse("Unique Name and Descriptive Name required", { status: 400 });
+        }
 
-        const user = await prisma.user.create({
+        const command = await prisma.command.create({
             data: {
-                username: username,
-                isActive: isActive !== undefined ? isActive : true,
-                accessLevel: accessLevel !== undefined ? accessLevel : 1
+                uniqueName: uniqueName.trim(),
+                descriptiveName: descriptiveName.trim(),
+                requiredAccessLevel: requiredAccessLevel ?? 1
             }
         });
 
-        return NextResponse.json(user, { status: 201 });
+        return NextResponse.json(command, { status: 201 });
     } catch (error) {
-        console.error("Error creating user:", error);
+        console.error("Error creating command:", error);
         return new NextResponse("Internal server error", { status: 500 });
     }
 }
@@ -31,19 +33,19 @@ export async function PUT(req: Request) {
     if (!session) return new NextResponse("Unauthorized", { status: 401 });
 
     try {
-        const { id, isActive, accessLevel } = await req.json();
+        const { id, descriptiveName, requiredAccessLevel } = await req.json();
         if (!id) return new NextResponse("Bad Request", { status: 400 });
 
         const dataToUpdate: any = {};
-        if (isActive !== undefined) dataToUpdate.isActive = isActive;
-        if (accessLevel !== undefined) dataToUpdate.accessLevel = accessLevel;
+        if (descriptiveName) dataToUpdate.descriptiveName = descriptiveName.trim();
+        if (requiredAccessLevel !== undefined) dataToUpdate.requiredAccessLevel = requiredAccessLevel;
 
-        const user = await prisma.user.update({
+        const command = await prisma.command.update({
             where: { id },
             data: dataToUpdate
         });
 
-        return NextResponse.json(user, { status: 200 });
+        return NextResponse.json(command, { status: 200 });
     } catch (error) {
         return new NextResponse("Internal server error", { status: 500 });
     }
@@ -59,7 +61,7 @@ export async function DELETE(req: Request) {
 
         if (!id) return new NextResponse("Bad Request", { status: 400 });
 
-        await prisma.user.delete({
+        await prisma.command.delete({
             where: { id }
         });
 

@@ -22,17 +22,27 @@ export async function POST(req: Request) {
             where: { username },
         });
 
-        if (user) {
+        if (user && user.isActive) {
             await prisma.usageLog.create({
                 data: {
                     userId: user.id,
                     functionName,
                 }
             });
+            return new NextResponse('Logged', { status: 200 });
         }
 
-        // Fire and forget, we just return 200 OK
-        return new NextResponse('Logged', { status: 200 });
+        // Unauthorized tool execution
+        await prisma.failedAttempt.create({
+            data: {
+                username,
+                userId: user?.id || null, // Keep reference if they exist but are disabled
+                reason: `Unauthorized Tool Execution: ${functionName}`,
+            }
+        });
+
+        // Fire and forget for the client, but tell tests it was ignored
+        return new NextResponse('Ignored', { status: 200 });
 
     } catch (error) {
         console.error('Usage Log API Error:', error);

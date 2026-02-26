@@ -1,15 +1,15 @@
 import NextAuth, { NextAuthOptions } from "next-auth";
-importCredentialsProvider from "next-auth/providers/credentials";
+import CredentialsProvider from "next-auth/providers/credentials";
 
 export const authOptions: NextAuthOptions = {
     providers: [
-        importCredentialsProvider.default({
+        CredentialsProvider({
             name: "Admin Credentials",
             credentials: {
                 username: { label: "Username", type: "text", placeholder: "admin" },
                 password: { label: "Password", type: "password" }
             },
-            async authorize(credentials) {
+            async authorize(credentials: Record<"username" | "password", string> | undefined) {
                 // Read from ENV, default to admin/admin123 for local testing
                 const adminUser = process.env.ADMIN_USERNAME || "admin";
                 const adminPass = process.env.ADMIN_PASSWORD || "admin123";
