@@ -1,0 +1,18 @@
+services:
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./web:/app
+      # We prevent node_modules and .next from being overwritten by the host machine
+      # so that the Linux node_modules created inside the container are preserved
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=file:./dev.db
+    # Override CMD to run the dev server during local development with docker compose
+    command: npm run dev
