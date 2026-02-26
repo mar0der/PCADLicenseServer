@@ -1,0 +1,41 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id                 String   @id @default(uuid())
+  username           String   @unique
+  machineName        String?  
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  lastLogin          DateTime?
+  lastRevitVersion   String?
+  usageLogs          UsageLog[]
+  failedAttempts     FailedAttempt[]
+}
+
+model UsageLog {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  functionName String
+  timestamp    DateTime @default(now())
+}
+
+model FailedAttempt {
+  id           String   @id @default(uuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  username     String?  // Store username even if user is not in DB
+  machineName  String?
+  reason       String?
+  timestamp    DateTime @default(now())
+}
