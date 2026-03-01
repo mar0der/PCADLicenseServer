@@ -50,9 +50,13 @@ sudo ./svc.sh start
 `scripts/deploy_pcad.sh` does:
 
 1. Rsync repo to `/opt/pcad/site` (excludes `.git`, `node_modules`, `.next`, temp artifacts).
-2. Run:
+2. Create pre-migration DB safety backup:
+   - `/srv/backups/thisServer/pcad.petarpetkov.com/db/predeploy/predeploy_*.db.gz`
+3. Run Prisma migrations against live DB volume (when `web/prisma/migrations/*` exist):
+   - `npx prisma migrate deploy`
+4. Run:
    - `docker compose -p pcad -f docker-compose.server.yml --env-file .env.server up -d --build`
-3. Validate:
+5. Validate:
    - `http://pcad.petarpetkov.com/` (expects redirect)
    - `https://pcad.petarpetkov.com/login` (expects `200`)
 

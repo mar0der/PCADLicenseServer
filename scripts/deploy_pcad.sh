@@ -11,12 +11,15 @@ need_cmd() {
 need_cmd rsync
 need_cmd docker
 need_cmd curl
+need_cmd gzip
 
 SITE_SLUG="${SITE_SLUG:-pcad}"
 DOMAIN="${DOMAIN:-pcad.petarpetkov.com}"
 SERVER_PATH="${SERVER_PATH:-/opt/${SITE_SLUG}/site}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.server.yml}"
 ENV_FILE="${ENV_FILE:-.env.server}"
+APP_DATA_VOLUME="${APP_DATA_VOLUME:-${SITE_SLUG}_pcad_data}"
+PREDEPLOY_KEEP="${PREDEPLOY_KEEP:-20}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_PATH="${SOURCE_PATH:-${GITHUB_WORKSPACE:-$(cd -- "${SCRIPT_DIR}/.." && pwd)}}"
@@ -33,6 +36,16 @@ if [[ ! -f "${SERVER_PATH}/${ENV_FILE}" ]]; then
   exit 1
 fi
 
+rotate_keep_latest() {
+  local dir="$1"
+  local keep="$2"
+  local pattern="$3"
+  mapfile -t files < <(find "$dir" -maxdepth 1 -type f -name "$pattern" -printf '%T@ %p\n' | sort -nr | awk '{print $2}')
+  if (( ${#files[@]} > keep )); then
+    printf '%s\0' "${files[@]:$keep}" | xargs -0r rm -f
+  fi
+}
+
 echo "Syncing ${SOURCE_PATH} -> ${SERVER_PATH}"
 rsync -az --delete \
   --exclude '.git' \
@@ -48,6 +61,35 @@ rsync -az --delete \
   "${SOURCE_PATH}/" "${SERVER_PATH}/"
 
 cd "${SERVER_PATH}"
+
+echo "Pre-migration DB backup"
+STAMP="$(date +%F_%H%M%S)"
+PREDEPLOY_DIR="/srv/backups/thisServer/${DOMAIN}/db/predeploy"
+PREDEPLOY_FILE="${PREDEPLOY_DIR}/predeploy_${SITE_SLUG}_${STAMP}.db.gz"
+mkdir -p "${PREDEPLOY_DIR}"
+docker volume create "${APP_DATA_VOLUME}" >/dev/null
+
+if docker run --rm -v "${APP_DATA_VOLUME}:/data:ro" alpine sh -lc 'test -f /data/dev.db'; then
+  docker run --rm -v "${APP_DATA_VOLUME}:/data:ro" alpine sh -lc 'cat /data/dev.db' | gzip -1 > "${PREDEPLOY_FILE}"
+  echo "Pre-migration DB backup created: ${PREDEPLOY_FILE}"
+  rotate_keep_latest "${PREDEPLOY_DIR}" "${PREDEPLOY_KEEP}" "predeploy_${SITE_SLUG}_*.db.gz"
+else
+  echo "No existing /data/dev.db in ${APP_DATA_VOLUME}; skipping pre-migration backup"
+fi
+
+echo "Prisma migration deploy"
+MIGRATIONS_DIR="${SERVER_PATH}/web/prisma/migrations"
+if [[ -d "${MIGRATIONS_DIR}" ]] && find "${MIGRATIONS_DIR}" -mindepth 1 -maxdepth 1 -type d | grep -q .; then
+  docker run --rm \
+    -v "${SERVER_PATH}/web:/workspace" \
+    -v "${APP_DATA_VOLUME}:/app/data" \
+    -w /workspace \
+    -e DATABASE_URL="file:/app/data/dev.db" \
+    -e PRISMA_HIDE_UPDATE_MESSAGE=1 \
+    node:22-alpine sh -lc 'apk add --no-cache libc6-compat >/dev/null && npm ci --no-audit --no-fund >/dev/null && npx prisma migrate deploy'
+else
+  echo "No prisma migrations found in web/prisma/migrations; skipping migrate deploy"
+fi
 
 echo "Starting containers"
 docker compose -p "${SITE_SLUG}" -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" up -d --build
