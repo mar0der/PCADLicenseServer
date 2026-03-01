@@ -56,8 +56,22 @@ echo "Compose status"
 docker compose -p "${SITE_SLUG}" -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" ps
 
 echo "Validation (app container)"
-docker compose -p "${SITE_SLUG}" -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" exec -T web \
-  node -e 'fetch("http://127.0.0.1:3000/login").then(r=>{console.log("web /login status:",r.status);process.exit(r.ok?0:1)}).catch(e=>{console.error(e);process.exit(1)})'
+ready=0
+for _ in $(seq 1 30); do
+  if docker compose -p "${SITE_SLUG}" -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" exec -T web \
+    node -e 'fetch("http://127.0.0.1:3000/login").then(r=>{console.log("web /login status:",r.status);process.exit(r.ok?0:1)}).catch(()=>process.exit(1))'
+  then
+    ready=1
+    break
+  fi
+  sleep 2
+done
+
+if [[ "${ready}" -ne 1 ]]; then
+  echo "App did not become ready in time" >&2
+  docker compose -p "${SITE_SLUG}" -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" logs --tail 100 web || true
+  exit 1
+fi
 
 echo "Validation (proxy route on web_network)"
 docker run --rm --network web_network curlimages/curl:8.12.1 \
