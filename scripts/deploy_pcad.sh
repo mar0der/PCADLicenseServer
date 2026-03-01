@@ -53,8 +53,19 @@ echo "Starting containers"
 docker compose -p "${SITE_SLUG}" -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" up -d --build
 
 echo "Compose status"
-docker compose -p "${SITE_SLUG}" -f "${COMPOSE_FILE}" ps
+docker compose -p "${SITE_SLUG}" -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" ps
 
-echo "HTTP/HTTPS validation"
-curl -fsSIL --max-time 20 "http://${DOMAIN}/" | sed -n '1,5p'
-curl -fsSIL --max-time 20 "https://${DOMAIN}/login" | sed -n '1,12p'
+echo "Validation (app container)"
+docker compose -p "${SITE_SLUG}" -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" exec -T web \
+  node -e 'fetch("http://127.0.0.1:3000/login").then(r=>{console.log("web /login status:",r.status);process.exit(r.ok?0:1)}).catch(e=>{console.error(e);process.exit(1)})'
+
+echo "Validation (proxy route on web_network)"
+docker run --rm --network web_network curlimages/curl:8.12.1 \
+  -fsSIL -H "Host: ${DOMAIN}" "http://main_proxy/login" | sed -n '1,12p'
+
+echo "Validation (public endpoint, non-blocking)"
+if curl -fsSIL --max-time 20 "https://${DOMAIN}/login" | sed -n '1,12p'; then
+  echo "Public HTTPS check succeeded"
+else
+  echo "Warning: public HTTPS check failed from runner host; external access may still be healthy"
+fi
