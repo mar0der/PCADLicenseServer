@@ -75,7 +75,7 @@ fi
 
 echo "Validation (proxy route on web_network)"
 docker run --rm --network web_network curlimages/curl:8.12.1 \
-  -fsSIL -H "Host: ${DOMAIN}" "http://main_proxy/login" | sed -n '1,12p'
+  -fsSI -H "Host: ${DOMAIN}" "http://main_proxy/login" | sed -n '1,12p'
 
 echo "Validation (public endpoint, non-blocking)"
 if curl -fsSIL --max-time 20 "https://${DOMAIN}/login" | sed -n '1,12p'; then
