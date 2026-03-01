@@ -55,7 +55,7 @@ export default async function DashboardOverview() {
 
     return (
         <div className="p-8">
-            <h1 className="text-3xl font-bold tracking-tight mb-8">System Overview</h1>
+            <h1 className="text-3xl font-bold tracking-tight mb-8">PCAD License System Overview</h1>
 
             {/* Top Stat Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
