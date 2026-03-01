@@ -1,0 +1,29 @@
+services:
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: pcad_web
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: file:/app/data/dev.db
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      PLUGIN_SECRET: ${PLUGIN_SECRET}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+    volumes:
+      - pcad_data:/app/data
+    networks:
+      web_network:
+        aliases:
+          - pcad-web
+
+volumes:
+  pcad_data:
+
+networks:
+  web_network:
+    external: true
+    name: web_network

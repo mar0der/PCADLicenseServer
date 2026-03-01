@@ -1,0 +1,40 @@
+name: CD
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pcad-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on:
+      - self-hosted
+      - Linux
+      - the18th
+    timeout-minutes: 45
+    environment:
+      name: production
+      url: https://pcad.petarpetkov.com
+    env:
+      SITE_SLUG: pcad
+      DOMAIN: pcad.petarpetkov.com
+      SERVER_PATH: /opt/pcad/site
+      COMPOSE_FILE: docker-compose.server.yml
+      ENV_FILE: .env.server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify deploy target exists
+        run: test -f /opt/pcad/site/.env.server
+
+      - name: Deploy
+        run: bash scripts/deploy_pcad.sh

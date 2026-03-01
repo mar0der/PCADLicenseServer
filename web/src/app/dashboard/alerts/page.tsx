@@ -36,7 +36,7 @@ export default async function AlertsPage() {
                                 </td>
                             </tr>
                         ) : (
-                            failedAttempts.map((log) => (
+                            failedAttempts.map((log: { id: string; timestamp: Date; username: string | null; machineName: string | null; reason: string | null }) => (
                                 <tr key={log.id} className="hover:bg-neutral-700/30 transition-colors">
                                     <td className="px-6 py-4 text-neutral-400 whitespace-nowrap">
                                         {new Date(log.timestamp).toLocaleString()}
