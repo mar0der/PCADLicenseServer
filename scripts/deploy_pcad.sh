@@ -47,7 +47,7 @@ rotate_keep_latest() {
 }
 
 echo "Syncing ${SOURCE_PATH} -> ${SERVER_PATH}"
-rsync -az --delete \
+rsync -rlptDz --delete --no-owner --no-group \
   --exclude '.git' \
   --exclude '.github' \
   --exclude '.env.server' \
