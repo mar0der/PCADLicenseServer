@@ -11,40 +11,148 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum BaseRole {
+  USER
+  TESTER
+  BOSS
+}
+
+enum CommandStage {
+  RELEASED
+  TESTING
+  DEVELOPMENT
+  DISABLED
+}
+
+enum UserCommandOverrideEffect {
+  GRANT
+  DENY
+}
+
 model User {
-  id                 String   @id @default(uuid())
-  username           String   @unique
-  machineName        String?  
-  isActive           Boolean  @default(true)
-  accessLevel        Int      @default(1) // 1=User, 2=Tester, 3=Boss
-  createdAt          DateTime @default(now())
-  lastLogin          DateTime?
-  lastRevitVersion   String?
-  usageLogs          UsageLog[]
-  failedAttempts     FailedAttempt[]
+  id                     String                 @id @default(uuid())
+  username               String                 @unique
+  isActive               Boolean                @default(true)
+  baseRole               BaseRole               @default(USER)
+  accessLevel            Int                    @default(1) // Legacy compatibility field: 1=User, 2=Tester, 3=Boss
+  createdAt              DateTime               @default(now())
+  lastLogin              DateTime?              // Legacy compatibility field
+  lastLoginAt            DateTime?
+  machineName            String?                // Legacy compatibility field
+  lastMachineName        String?
+  lastMachineFingerprint String?
+  lastRevitVersion       String?
+  usageLogs              UsageLog[]
+  failedAttempts         FailedAttempt[]
+  commandOverrides       UserCommandOverride[]
+  securityEvents         SecurityEvent[]
+  pluginSessionSnapshots PluginSessionSnapshot[]
 }
 
 model UsageLog {
-  id           String   @id @default(uuid())
+  id           String                 @id @default(uuid())
   userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pluginSlug   String                 @default("dokaflex")
   functionName String
-  timestamp    DateTime @default(now())
+  commandKey   String?
+  snapshotId   String?
+  snapshot     PluginSessionSnapshot? @relation(fields: [snapshotId], references: [snapshotId], onDelete: SetNull)
+  timestamp    DateTime               @default(now())
+
+  @@index([pluginSlug, commandKey])
 }
 
 model FailedAttempt {
-  id           String   @id @default(uuid())
-  userId       String?
-  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  username     String?  // Store username even if user is not in DB
-  machineName  String?
-  reason       String?
-  timestamp    DateTime @default(now())
+  id          String   @id @default(uuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  username    String?  // Store username even if user is not in DB
+  machineName String?
+  reason      String?
+  timestamp   DateTime @default(now())
 }
 
 model Command {
-  id                  String   @id @default(uuid())
-  uniqueName          String   @unique
+  id                  String                @id @default(uuid())
+  pluginSlug          String                @default("dokaflex")
+  commandKey          String
+  displayName         String
+  stage               CommandStage          @default(RELEASED)
+  isActive            Boolean               @default(true)
+  category            String?
+  description         String?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  uniqueName          String                @unique // Legacy compatibility field
   descriptiveName     String
-  requiredAccessLevel Int      @default(1) // 1=User, 2=Tester, 3=Boss
+  requiredAccessLevel Int                   @default(1) // Legacy compatibility field: 1=User, 2=Tester, 3=Boss
+  commandOverrides    UserCommandOverride[]
+
+  @@unique([pluginSlug, commandKey])
+}
+
+model UserCommandOverride {
+  id        String                    @id @default(uuid())
+  userId    String
+  user      User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  commandId String
+  command   Command                   @relation(fields: [commandId], references: [id], onDelete: Cascade)
+  effect    UserCommandOverrideEffect
+  expiresAt DateTime?
+  reason    String?
+  createdAt DateTime                  @default(now())
+
+  @@index([userId, commandId])
+}
+
+model SecurityEvent {
+  id                 String   @id @default(uuid())
+  userId             String?
+  user               User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  pluginSlug         String?
+  username           String?
+  machineName        String?
+  machineFingerprint String?
+  eventType          String
+  reason             String?
+  details            String?
+  createdAt          DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([eventType])
+}
+
+model ApiKey {
+  id         String   @id @default(uuid())
+  name       String
+  keyPrefix  String   @unique
+  secretHash String
+  scopes     String
+  isActive   Boolean  @default(true)
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
+  createdAt  DateTime @default(now())
+}
+
+model PluginSessionSnapshot {
+  snapshotId         String     @id @default(uuid())
+  userId             String
+  user               User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pluginSlug         String
+  pluginVersion      String?
+  machineFingerprint String
+  machineName        String
+  revitVersion       String
+  policyVersion      Int
+  issuedAtUtc        DateTime
+  refreshAfterUtc    DateTime
+  graceUntilUtc      DateTime
+  revokedAtUtc       DateTime?
+  allowedCommandKeys String?
+  createdAt          DateTime   @default(now())
+  usageLogs          UsageLog[]
+
+  @@index([userId, pluginSlug])
+  @@index([machineFingerprint])
 }

@@ -25,7 +25,7 @@ export function verifySignature(payload: string, signature: string | null): bool
             Buffer.from(signature, 'hex'),
             Buffer.from(expectedSignature, 'hex')
         );
-    } catch (e) {
+    } catch {
         // If the signature is not proper hex length, timingSafeEqual throws
         return false;
     }

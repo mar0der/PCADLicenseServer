@@ -1,7 +1,9 @@
 const crypto = require('crypto');
 
-const API_URL = 'http://localhost:3000/api';
+const API_URL = 'https://pcad.petarpetkov.com/api';
 const PLUGIN_SECRET = 'your-very-long-and-secure-random-string';
+
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // Bypass self-signed cert error for testing
 
 // Helper function to generate HMAC signature (matches C# logic)
 function generateSignature(payload) {

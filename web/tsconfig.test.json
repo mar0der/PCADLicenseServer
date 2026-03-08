@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": ".test-dist",
+    "rootDir": "."
+  },
+  "include": [
+    "src/lib/auth.ts",
+    "src/lib/access-control/**/*.ts",
+    "src/lib/dashboard/**/*.ts",
+    "test/**/*.test.ts"
+  ]
+}

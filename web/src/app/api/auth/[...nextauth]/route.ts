@@ -10,9 +10,13 @@ export const authOptions: NextAuthOptions = {
                 password: { label: "Password", type: "password" }
             },
             async authorize(credentials: Record<"username" | "password", string> | undefined) {
-                // Read from ENV, default to admin/admin123 for local testing
-                const adminUser = process.env.ADMIN_USERNAME || "admin";
-                const adminPass = process.env.ADMIN_PASSWORD || "admin123";
+                const adminUser = process.env.ADMIN_USERNAME?.trim();
+                const adminPass = process.env.ADMIN_PASSWORD?.trim();
+
+                if (!adminUser || !adminPass) {
+                    console.error("Missing ADMIN_USERNAME or ADMIN_PASSWORD configuration.");
+                    return null;
+                }
 
                 if (credentials?.username === adminUser && credentials?.password === adminPass) {
                     return { id: "1", name: adminUser };

@@ -44,4 +44,5 @@ next-env.d.ts
 
 *.db
 *.db-journal
-
+/.test-dist/
+/.test-runtime/

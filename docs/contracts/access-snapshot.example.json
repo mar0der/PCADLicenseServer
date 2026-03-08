@@ -1,0 +1,21 @@
+{
+  "format": "pcad-access-snapshot/v1",
+  "payload": {
+    "snapshotId": "00000000-0000-4000-8000-000000000001",
+    "policyVersion": 1,
+    "pluginSlug": "dokaflex",
+    "username": "local-test-user",
+    "machineFingerprint": "machine-fingerprint-example",
+    "machineName": "DEV-PC-01",
+    "revitVersion": "2024",
+    "baseRole": "TESTER",
+    "allowedCommandKeys": [
+      "DF.GENERATE_BEAM",
+      "DF.SMART_ARRAY"
+    ],
+    "issuedAtUtc": "2026-03-08T10:00:00Z",
+    "refreshAfterUtc": "2026-03-09T10:00:00Z",
+    "graceUntilUtc": "2026-03-15T10:00:00Z"
+  },
+  "signature": "SEPW137rO7ltjsLDlnPzyIUxnMVy5MqJepnp89R6kRK-XohJSwGsn4EH62kZBfCzIQOd0rrIfmausDh1WoxMvcFaaj6VP6dBdUg98_ACshxGdzNB5Ozoj7nC6650sBv-Rd0uooqnMmLqBpa6Th8_z88SXpOpK8vIJJ2HoqXFuDqyKVVBC1-0OZ3b7ICCocnFPmX1xH16b0pcq-WCSZQnt8fOsX-ug4w7KOA56Rm5okb_O5yrSEKfWaUDD5zfkw7E31H9TAxADr33LyTKxRxnk2nK_jikXwNF_TkzyfU9OQAfEmhGG5-kBeUN7CN5Iyd89bA0oK-lFUwGaCc-1Eg_3A"
+}
