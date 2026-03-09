@@ -1,0 +1,8 @@
+CREATE TABLE "PluginConfigurationState" (
+  "pluginSlug" TEXT NOT NULL PRIMARY KEY,
+  "capabilityCatalogVersion" INTEGER NOT NULL DEFAULT 0,
+  "ribbonLayoutVersion" INTEGER NOT NULL DEFAULT 0,
+  "configVersion" INTEGER NOT NULL DEFAULT 0,
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

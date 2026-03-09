@@ -29,6 +29,16 @@ enum UserCommandOverrideEffect {
   DENY
 }
 
+enum RibbonItemKind {
+  push_button
+  stack_2
+  stack_3
+  pulldown
+  split_button
+  separator
+  slideout
+}
+
 model User {
   id                     String                 @id @default(uuid())
   username               String                 @unique
@@ -78,6 +88,8 @@ model Command {
   pluginSlug          String                @default("dokaflex")
   commandKey          String
   displayName         String
+  manifestTitle       String?
+  iconCommandKey      String?
   stage               CommandStage          @default(RELEASED)
   isActive            Boolean               @default(true)
   category            String?
@@ -90,6 +102,85 @@ model Command {
   commandOverrides    UserCommandOverride[]
 
   @@unique([pluginSlug, commandKey])
+}
+
+model IconAsset {
+  id          String   @id @default(uuid())
+  pluginSlug  String
+  iconKey     String
+  contentType String?
+  dataUri     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([pluginSlug, iconKey])
+  @@index([pluginSlug])
+}
+
+model RibbonTab {
+  id         String   @id @default(uuid())
+  pluginSlug String
+  tabKey     String
+  title      String
+  order      Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([pluginSlug, tabKey])
+  @@index([pluginSlug, order])
+}
+
+model RibbonPanel {
+  id         String   @id @default(uuid())
+  pluginSlug String
+  panelKey   String
+  tabKey     String
+  title      String
+  order      Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([pluginSlug, panelKey])
+  @@index([pluginSlug, tabKey, order])
+}
+
+model RibbonItem {
+  id             String   @id @default(uuid())
+  pluginSlug     String
+  itemKey        String
+  panelKey       String
+  order          Int
+  kind           RibbonItemKind
+  size           String?
+  commandKey     String?
+  iconCommandKey String?
+  parentItemKey  String?
+  title          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([pluginSlug, itemKey])
+  @@index([pluginSlug, panelKey, order])
+  @@index([pluginSlug, parentItemKey, order])
+}
+
+model RawUsageEvent {
+  eventId            String                 @id
+  pluginSlug         String
+  commandKey         String
+  username           String
+  machineFingerprint String
+  pluginVersion      String
+  revitVersion       String
+  occurredAtUtc      DateTime
+  occurredOnDateUtc  DateTime
+  snapshotId         String?
+  snapshot           PluginSessionSnapshot? @relation(fields: [snapshotId], references: [snapshotId], onDelete: SetNull)
+  createdAt          DateTime               @default(now())
+
+  @@index([pluginSlug, commandKey, occurredAtUtc])
+  @@index([pluginSlug, commandKey, occurredOnDateUtc])
+  @@index([pluginSlug, username])
 }
 
 model UserCommandOverride {
@@ -135,6 +226,15 @@ model ApiKey {
   createdAt  DateTime @default(now())
 }
 
+model PluginConfigurationState {
+  pluginSlug               String   @id
+  capabilityCatalogVersion Int      @default(0)
+  ribbonLayoutVersion      Int      @default(0)
+  configVersion            Int      @default(0)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+}
+
 model PluginSessionSnapshot {
   snapshotId         String     @id @default(uuid())
   userId             String
@@ -152,6 +252,7 @@ model PluginSessionSnapshot {
   allowedCommandKeys String?
   createdAt          DateTime   @default(now())
   usageLogs          UsageLog[]
+  rawUsageEvents     RawUsageEvent[]
 
   @@index([userId, pluginSlug])
   @@index([machineFingerprint])

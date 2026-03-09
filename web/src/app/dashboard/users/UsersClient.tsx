@@ -81,52 +81,6 @@ export default function UsersClient({
     }
   }
 
-  async function toggleStatus(id: string, currentStatus: boolean) {
-    try {
-      const response = await fetch("/api/admin/users", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, isActive: !currentStatus }),
-      });
-
-      if (!response.ok) {
-        alert("Failed to update user status.");
-        return;
-      }
-
-      const updatedUser = (await response.json()) as DashboardUser;
-      setUsers((currentUsers) =>
-        currentUsers.map((user) => (user.id === id ? updatedUser : user))
-      );
-    } catch (error) {
-      console.error("Failed to toggle status", error);
-      alert("Failed to update user status.");
-    }
-  }
-
-  async function changeAccessLevel(id: string, nextLevel: number) {
-    try {
-      const response = await fetch("/api/admin/users", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, accessLevel: nextLevel }),
-      });
-
-      if (!response.ok) {
-        alert("Failed to update access level.");
-        return;
-      }
-
-      const updatedUser = (await response.json()) as DashboardUser;
-      setUsers((currentUsers) =>
-        currentUsers.map((user) => (user.id === id ? updatedUser : user))
-      );
-    } catch (error) {
-      console.error("Failed to update access level", error);
-      alert("Failed to update access level.");
-    }
-  }
-
   async function deleteUser(id: string) {
     if (!confirm("Are you sure you want to delete this user?")) {
       return;
@@ -150,10 +104,19 @@ export default function UsersClient({
     }
   }
 
+  function handleUserUpdated(updatedUser: DashboardUser) {
+    setUsers((currentUsers) =>
+      currentUsers.map((user) => (user.id === updatedUser.id ? updatedUser : user))
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="bg-neutral-800 p-6 rounded-xl border border-neutral-700 shadow-sm">
-        <h2 className="text-lg font-medium text-white mb-4">Add New User</h2>
+        <h2 className="text-lg font-medium text-white mb-2">Add New User</h2>
+        <p className="mb-4 text-sm text-neutral-400">
+          Create the licensed user first, then open <span className="font-medium text-white">Customize Dokaflex</span> to manage role, status, overrides, and effective access in one place.
+        </p>
         <form onSubmit={handleAddUser} className="flex gap-4 flex-wrap md:flex-nowrap">
           <input
             type="text"
@@ -167,10 +130,11 @@ export default function UsersClient({
             value={newAccessLevel}
             onChange={(event) => setNewAccessLevel(Number(event.target.value))}
             className="h-10 rounded-md border border-neutral-600 bg-neutral-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            aria-label="Base role"
           >
-            <option value={1}>User</option>
-            <option value={2}>Tester</option>
-            <option value={3}>Boss</option>
+            <option value={1}>USER base role</option>
+            <option value={2}>TESTER base role</option>
+            <option value={3}>BOSS base role</option>
           </select>
           <button
             type="submit"
@@ -187,11 +151,11 @@ export default function UsersClient({
           <thead className="text-xs text-neutral-400 uppercase bg-neutral-900/50 border-b border-neutral-700">
             <tr>
               <th className="px-6 py-4 font-medium">Username</th>
-              <th className="px-6 py-4 font-medium">Role</th>
+              <th className="px-6 py-4 font-medium">Base Role</th>
               <th className="px-6 py-4 font-medium">Status</th>
-              <th className="px-6 py-4 font-medium">Machine Name</th>
+              <th className="px-6 py-4 font-medium">Last Machine</th>
               <th className="px-6 py-4 font-medium">Last Login</th>
-              <th className="px-6 py-4 font-medium text-right">Actions</th>
+              <th className="px-6 py-4 font-medium text-right">Dokaflex</th>
             </tr>
           </thead>
           <tbody>
@@ -216,21 +180,9 @@ export default function UsersClient({
                   >
                     <td className="px-6 py-4 font-medium text-white">{user.username}</td>
                     <td className="px-6 py-4">
-                      <select
-                        value={user.accessLevel}
-                        onChange={(event) => void changeAccessLevel(user.id, Number(event.target.value))}
-                        className="bg-transparent border border-neutral-600 rounded px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      >
-                        <option value={1} className="bg-neutral-800">
-                          User
-                        </option>
-                        <option value={2} className="bg-neutral-800">
-                          Tester
-                        </option>
-                        <option value={3} className="bg-neutral-800">
-                          Boss
-                        </option>
-                      </select>
+                      <span className="inline-flex items-center rounded-full bg-neutral-700 px-3 py-1 text-xs font-medium text-neutral-200">
+                        {user.baseRole}
+                      </span>
                     </td>
                     <td className="px-6 py-4">
                       <span
@@ -250,18 +202,13 @@ export default function UsersClient({
                         <button
                           type="button"
                           onClick={() => setSelectedUserId(user.id)}
-                          className={`transition-colors ${
-                            isSelected ? "text-blue-300" : "text-blue-400 hover:text-blue-300"
+                          className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                            isSelected
+                              ? "bg-blue-500/15 text-blue-200"
+                              : "bg-neutral-700 text-blue-300 hover:bg-neutral-600"
                           }`}
                         >
-                          Customize Dokaflex
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void toggleStatus(user.id, user.isActive)}
-                          className="text-neutral-400 hover:text-white transition-colors"
-                        >
-                          {user.isActive ? "Disable" : "Enable"}
+                          {isSelected ? "Editing Dokaflex" : "Customize Dokaflex"}
                         </button>
                         <button
                           type="button"
@@ -300,7 +247,11 @@ export default function UsersClient({
               </button>
             </div>
 
-            <DokaflexAccessPanel user={selectedUser} dokaflexCommands={initialDokaflexCommands} />
+            <DokaflexAccessPanel
+              user={selectedUser}
+              dokaflexCommands={initialDokaflexCommands}
+              onUserUpdated={handleUserUpdated}
+            />
           </div>
         </div>
       ) : null}

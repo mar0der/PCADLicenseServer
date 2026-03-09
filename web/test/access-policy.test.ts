@@ -14,6 +14,14 @@ import {
 import { DOKAFLEX_COMMAND_CATALOG, seedDokaflexCommandCatalog } from "../src/lib/access-control/dokaflexCatalog";
 import { handleAccessRefreshRequest } from "../src/lib/access-control/refreshEndpoint";
 import { issueAccessSnapshot } from "../src/lib/access-control/refreshService";
+import { handlePluginCatalogSyncRequest } from "../src/lib/plugin-data/catalogEndpoint";
+import {
+  handlePluginConfigRefreshRequest,
+} from "../src/lib/plugin-configuration/refreshEndpoint";
+import {
+  verifyPluginConfigSnapshotSignature,
+} from "../src/lib/plugin-configuration/configSnapshot";
+import { seedDokaflexRibbonLayout } from "../src/lib/ribbon-layout/dokaflexLayout";
 import {
   createUserCommandOverride,
   deleteUserCommandOverride,
@@ -415,6 +423,222 @@ test("refresh endpoint rejects unknown and inactive users", async () => {
   });
 });
 
+test("config refresh endpoint returns a signed plugin-config snapshot with the seeded Dokaflex layout", async () => {
+  await withTestPrisma(async (prisma) => {
+    const { privateKey, publicKey } = generateTestKeyPair();
+    const username = `config-user-${randomUUID()}`;
+
+    await prisma.user.create({
+      data: {
+        username,
+        isActive: true,
+        baseRole: "USER",
+        accessLevel: 1,
+      },
+    });
+    await seedDokaflexCommandCatalog(prisma);
+    const layoutSeed = await seedDokaflexRibbonLayout(prisma);
+    assert.equal(layoutSeed.created, true);
+
+    const conflictingCatalogBody = JSON.stringify({
+      pluginSlug: "dokaflex",
+      commands: [],
+      iconAssets: [],
+      ribbonTabs: [{ tabKey: "PLUGIN.TAB.IGNORED", title: "Ignored", order: 99 }],
+      ribbonPanels: [
+        {
+          panelKey: "PLUGIN.PANEL.IGNORED",
+          tabKey: "PLUGIN.TAB.IGNORED",
+          title: "Ignored",
+          order: 99,
+        },
+      ],
+      ribbonItems: [
+        {
+          itemKey: "PLUGIN.ITEM.IGNORED",
+          panelKey: "PLUGIN.PANEL.IGNORED",
+          order: 99,
+          kind: "push_button",
+          commandKey: "DF.GENERATE_BEAM",
+        },
+      ],
+    });
+    const catalogSyncResult = await withPluginSecret("slice-7-plugin-secret", () =>
+      handlePluginCatalogSyncRequest(prisma, {
+        rawBody: conflictingCatalogBody,
+        signature: createPluginSignature(conflictingCatalogBody, "slice-7-plugin-secret"),
+      })
+    );
+    assert.equal(catalogSyncResult.status, 200);
+
+    const requestBody = JSON.stringify({
+      pluginSlug: "dokaflex",
+      username,
+      machineName: "DEV-PC-01",
+      machineFingerprint: "fingerprint-123",
+      revitVersion: "2024",
+      pluginVersion: "24.10.03",
+    });
+    const result = await withPluginSecret("slice-7-plugin-secret", () =>
+      handlePluginConfigRefreshRequest(prisma, {
+        rawBody: requestBody,
+        signature: createPluginSignature(requestBody, "slice-7-plugin-secret"),
+        now: new Date("2026-03-08T10:00:00Z"),
+        loadPrivateKeyPem: () => privateKey,
+      })
+    );
+
+    assert.equal(result.status, 200);
+    if (!("format" in result.body)) {
+      assert.fail("Expected a signed plugin config snapshot envelope");
+    }
+
+    assert.equal(result.body.format, "pcad-plugin-config/v1");
+    assert.equal(result.body.payload.pluginSlug, "dokaflex");
+    assert.equal(result.body.payload.access.baseRole, "USER");
+    assert.equal(result.body.payload.refreshAfterUtc, "2026-03-09T10:00:00Z");
+    assert.equal(result.body.payload.graceUntilUtc, "2026-03-15T10:00:00Z");
+    assert.ok(result.body.payload.access.allowedCommandKeys.includes("DF.GENERATE_BEAM"));
+    assert.ok(!result.body.payload.access.allowedCommandKeys.includes("DF.SMART_ARRAY"));
+    assert.equal(result.body.payload.ribbonLayout.tabs[0]?.tabKey, "DF.TAB.MAIN");
+    assert.deepEqual(
+      result.body.payload.ribbonLayout.tabs[0]?.panels.map((panel) => panel.panelKey),
+      [
+        "DF.PANEL.UTILITIES",
+        "DF.PANEL.GENERATE",
+        "DF.PANEL.ARRAYS",
+        "DF.PANEL.MODIFY",
+        "DF.PANEL.SETTINGS",
+      ]
+    );
+    assert.equal(
+      result.body.payload.ribbonLayout.tabs[0]?.panels[0]?.items[0]?.commandKey,
+      "DF.UPDATE_PLUGIN"
+    );
+    assert.equal(
+      verifyPluginConfigSnapshotSignature(result.body.payload, result.body.signature, publicKey),
+      true
+    );
+
+    const snapshot = await prisma.pluginSessionSnapshot.findUniqueOrThrow({
+      where: { snapshotId: result.body.payload.snapshotId },
+    });
+    assert.equal(
+      snapshot.allowedCommandKeys,
+      JSON.stringify(result.body.payload.access.allowedCommandKeys)
+    );
+
+    const updatedUser = await prisma.user.findUniqueOrThrow({ where: { username } });
+    assert.equal(updatedUser.lastMachineFingerprint, "fingerprint-123");
+    assert.equal(updatedUser.lastMachineName, "DEV-PC-01");
+  });
+});
+
+test("config refresh endpoint rejects invalid HMAC and logs a security event", async () => {
+  await withTestPrisma(async (prisma) => {
+    const requestBody = JSON.stringify({
+      pluginSlug: "dokaflex",
+      username: "unknown-user",
+      machineName: "DEV-PC-01",
+      machineFingerprint: "fingerprint-123",
+      revitVersion: "2024",
+      pluginVersion: "24.10.03",
+    });
+
+    const result = await withPluginSecret("slice-7-plugin-secret", () =>
+      handlePluginConfigRefreshRequest(prisma, {
+        rawBody: requestBody,
+        signature: "bad-signature",
+      })
+    );
+
+    assert.equal(result.status, 401);
+    assert.deepEqual(result.body, {
+      code: "INVALID_SIGNATURE",
+      message: "Invalid signature",
+    });
+
+    const securityEvents = await prisma.securityEvent.findMany({
+      where: {
+        eventType: "invalid_signature",
+        reason: "Invalid plugin signature during /api/plugin/config/refresh",
+      },
+    });
+    assert.equal(securityEvents.length, 1);
+  });
+});
+
+test("config refresh endpoint rejects unknown and inactive users", async () => {
+  await withTestPrisma(async (prisma) => {
+    const { privateKey } = generateTestKeyPair();
+    const inactiveUsername = `inactive-config-user-${randomUUID()}`;
+
+    await seedDokaflexCommandCatalog(prisma);
+    await seedDokaflexRibbonLayout(prisma);
+    await prisma.user.create({
+      data: {
+        username: inactiveUsername,
+        isActive: false,
+        baseRole: "USER",
+        accessLevel: 1,
+      },
+    });
+
+    const unknownBody = JSON.stringify({
+      pluginSlug: "dokaflex",
+      username: "unknown-user",
+      machineName: "DEV-PC-01",
+      machineFingerprint: "fingerprint-123",
+      revitVersion: "2024",
+      pluginVersion: "24.10.03",
+    });
+    const unknownResult = await withPluginSecret("slice-7-plugin-secret", () =>
+      handlePluginConfigRefreshRequest(prisma, {
+        rawBody: unknownBody,
+        signature: createPluginSignature(unknownBody, "slice-7-plugin-secret"),
+        loadPrivateKeyPem: () => privateKey,
+      })
+    );
+
+    assert.equal(unknownResult.status, 403);
+    assert.deepEqual(unknownResult.body, {
+      code: "USER_NOT_FOUND",
+      message: "Access denied",
+    });
+
+    const inactiveBody = JSON.stringify({
+      pluginSlug: "dokaflex",
+      username: inactiveUsername,
+      machineName: "DEV-PC-02",
+      machineFingerprint: "fingerprint-456",
+      revitVersion: "2024",
+      pluginVersion: "24.10.03",
+    });
+    const inactiveResult = await withPluginSecret("slice-7-plugin-secret", () =>
+      handlePluginConfigRefreshRequest(prisma, {
+        rawBody: inactiveBody,
+        signature: createPluginSignature(inactiveBody, "slice-7-plugin-secret"),
+        loadPrivateKeyPem: () => privateKey,
+      })
+    );
+
+    assert.equal(inactiveResult.status, 403);
+    assert.deepEqual(inactiveResult.body, {
+      code: "USER_INACTIVE",
+      message: "Access denied",
+    });
+
+    const unknownEvents = await prisma.securityEvent.findMany({
+      where: { eventType: "unknown_user_attempt" },
+    });
+    const inactiveEvents = await prisma.securityEvent.findMany({
+      where: { eventType: "disabled_user_attempt" },
+    });
+    assert.equal(unknownEvents.length, 1);
+    assert.equal(inactiveEvents.length, 1);
+  });
+});
+
 test("override APIs and effective-access preview stay in sync", async () => {
   await withTestPrisma(async (prisma) => {
     const pluginSlug = `preview-${randomUUID()}`;
@@ -577,12 +801,30 @@ async function withTestPrisma(run: (prisma: PrismaClient) => Promise<void>) {
   });
 
   try {
+    await resetTestDatabase(prisma);
     await run(prisma);
   } finally {
     await prisma.$disconnect();
     fs.rmSync(dbPath, { force: true });
     fs.rmSync(`${dbPath}-journal`, { force: true });
   }
+}
+
+async function resetTestDatabase(prisma: PrismaClient): Promise<void> {
+  await prisma.rawUsageEvent.deleteMany();
+  await prisma.usageLog.deleteMany();
+  await prisma.userCommandOverride.deleteMany();
+  await prisma.pluginSessionSnapshot.deleteMany();
+  await prisma.failedAttempt.deleteMany();
+  await prisma.securityEvent.deleteMany();
+  await prisma.ribbonItem.deleteMany();
+  await prisma.ribbonPanel.deleteMany();
+  await prisma.ribbonTab.deleteMany();
+  await prisma.pluginConfigurationState.deleteMany();
+  await prisma.iconAsset.deleteMany();
+  await prisma.command.deleteMany();
+  await prisma.apiKey.deleteMany();
+  await prisma.user.deleteMany();
 }
 
 function generateTestKeyPair(): { privateKey: string; publicKey: string } {

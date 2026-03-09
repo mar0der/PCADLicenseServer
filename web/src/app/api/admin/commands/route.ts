@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { CommandStage } from "@prisma/client";
 import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { authOptions } from "@/lib/adminAuth";
 import prisma from "@/lib/prisma";
 import {
   accessLevelFromCommandStage,
@@ -15,6 +15,28 @@ type CommandUpdatePayload = {
   requiredAccessLevel?: number;
   stage?: CommandStage;
 };
+
+export async function GET(req: Request) {
+  const session = await getServerSession(authOptions);
+  if (!session) {
+    return new NextResponse("Unauthorized", { status: 401 });
+  }
+
+  const { searchParams } = new URL(req.url);
+  const pluginSlug = searchParams.get("pluginSlug")?.trim();
+
+  try {
+    const commands = await prisma.command.findMany({
+      where: pluginSlug ? { pluginSlug } : undefined,
+      orderBy: [{ pluginSlug: "asc" }, { commandKey: "asc" }],
+    });
+
+    return NextResponse.json(commands, { status: 200 });
+  } catch (error) {
+    console.error("Error listing commands:", error);
+    return new NextResponse("Internal server error", { status: 500 });
+  }
+}
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);

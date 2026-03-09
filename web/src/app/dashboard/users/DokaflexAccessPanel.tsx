@@ -10,6 +10,7 @@ import type {
 
 import type { ResolvedCommandAccess } from "@/lib/access-control/resolveEffectiveAllowedCommandKeys";
 import {
+  buildDokaflexUserSurfaceSummary,
   buildPreviewDisplayRows,
   validateOverrideDeleteId,
   validateOverrideForm,
@@ -19,7 +20,15 @@ import {
 type DokaflexCommandOption = Pick<Command, "id" | "commandKey" | "displayName" | "stage">;
 type DashboardUser = Pick<
   User,
-  "id" | "username" | "isActive" | "baseRole" | "accessLevel"
+  | "id"
+  | "username"
+  | "isActive"
+  | "baseRole"
+  | "accessLevel"
+  | "machineName"
+  | "lastMachineName"
+  | "lastLogin"
+  | "lastLoginAt"
 >;
 
 type OverrideRecord = {
@@ -50,22 +59,30 @@ const DOKAFLEX_PLUGIN_SLUG = "dokaflex";
 export default function DokaflexAccessPanel({
   user,
   dokaflexCommands,
+  onUserUpdated,
 }: {
   user: DashboardUser;
   dokaflexCommands: DokaflexCommandOption[];
+  onUserUpdated: (user: DashboardUser) => void;
 }) {
   const [overrides, setOverrides] = useState<OverrideRecord[]>([]);
   const [preview, setPreview] = useState<AccessPreview | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUpdatingUser, setIsUpdatingUser] = useState(false);
   const [deletingOverrideId, setDeletingOverrideId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
+  const [roleDraft, setRoleDraft] = useState<BaseRole>(user.baseRole);
   const [form, setForm] = useState<OverrideFormInput>({
     commandKey: dokaflexCommands[0]?.commandKey ?? "",
     effect: "GRANT",
     expiresAtLocal: "",
     reason: "",
   });
+
+  useEffect(() => {
+    setRoleDraft(user.baseRole);
+  }, [user.baseRole, user.id]);
 
   useEffect(() => {
     if (!form.commandKey && dokaflexCommands[0]) {
@@ -145,6 +162,37 @@ export default function DokaflexAccessPanel({
     : [];
 
   const availableCommandKeys = dokaflexCommands.map((command) => command.commandKey);
+  const userSummary = buildDokaflexUserSurfaceSummary(user);
+
+  async function handleRoleUpdate() {
+    if (roleDraft === user.baseRole) {
+      setFeedback({
+        tone: "info",
+        message: `${user.username} is already using the ${user.baseRole} base role.`,
+      });
+      return;
+    }
+
+    await updateUser(
+      {
+        id: user.id,
+        baseRole: roleDraft,
+      },
+      `Base role for ${user.username} updated to ${roleDraft}. Effective Dokaflex access was reloaded.`
+    );
+  }
+
+  async function handleStatusToggle() {
+    await updateUser(
+      {
+        id: user.id,
+        isActive: !user.isActive,
+      },
+      user.isActive
+        ? `${user.username} is now disabled. Dokaflex access preview was refreshed and should block all commands.`
+        : `${user.username} is now active again. Dokaflex access preview was refreshed.`
+    );
+  }
 
   async function handleCreateOverride(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -188,7 +236,7 @@ export default function DokaflexAccessPanel({
       });
       setFeedback({
         tone: "success",
-        message: `Override saved for ${user.username}.`,
+        message: `Saved a ${validation.value.effect} override for ${user.username} on ${validation.value.commandKey}. Effective Dokaflex access was refreshed.`,
       });
     } catch (error) {
       setFeedback({
@@ -225,7 +273,7 @@ export default function DokaflexAccessPanel({
       await refreshAccessState();
       setFeedback({
         tone: "success",
-        message: "Override deleted.",
+        message: `Removed the Dokaflex override for ${user.username}. Effective access was refreshed.`,
       });
     } catch (error) {
       setFeedback({
@@ -270,22 +318,59 @@ export default function DokaflexAccessPanel({
     setPreview(previewPayload);
   }
 
+  async function updateUser(
+    payload: { id: string; baseRole?: BaseRole; isActive?: boolean },
+    successMessage: string
+  ) {
+    setIsUpdatingUser(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, "Failed to update Dokaflex user settings."));
+      }
+
+      const updatedUser = (await response.json()) as DashboardUser;
+      onUserUpdated(updatedUser);
+      await refreshAccessState();
+      setFeedback({
+        tone: "success",
+        message: successMessage,
+      });
+    } catch (error) {
+      setFeedback({
+        tone: "error",
+        message: error instanceof Error ? error.message : "Failed to update Dokaflex user settings.",
+      });
+    } finally {
+      setIsUpdatingUser(false);
+    }
+  }
+
   return (
     <section className="bg-neutral-800 rounded-xl border border-neutral-700 shadow-sm">
       <div className="border-b border-neutral-700 px-6 py-5">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-white">Dokaflex Access Control</h2>
+            <h2 className="text-lg font-semibold text-white">
+              Customize Dokaflex For {user.username}
+            </h2>
             <p className="mt-1 text-sm text-neutral-400">
-              Manage overrides and preview effective command access for{" "}
-              <span className="font-medium text-white">{user.username}</span>.
+              One editing surface for role, active state, overrides, and effective Dokaflex access
+              for the selected user.
             </p>
           </div>
           <div className="flex flex-wrap gap-2 text-xs">
             <Badge tone="neutral">Plugin: {DOKAFLEX_PLUGIN_SLUG}</Badge>
-            <Badge tone="neutral">Base role: {user.baseRole}</Badge>
-            <Badge tone={user.isActive ? "success" : "error"}>
-              {user.isActive ? "User active" : "User inactive"}
+            <Badge tone="neutral">{userSummary.roleLabel}</Badge>
+            <Badge tone={userSummary.statusTone === "success" ? "success" : "error"}>
+              {userSummary.statusLabel}
             </Badge>
           </div>
         </div>
@@ -313,6 +398,64 @@ export default function DokaflexAccessPanel({
         ) : (
           <div className="grid gap-6 xl:grid-cols-[1.1fr_1fr]">
             <div className="space-y-6">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <SummaryCard label="Username" value={userSummary.username} />
+                <SummaryCard label="Status" value={userSummary.statusLabel} />
+                <SummaryCard label="Base Role" value={user.baseRole} />
+                <SummaryCard label="Last Machine" value={userSummary.machineLabel} />
+              </div>
+
+              <div className="rounded-lg border border-neutral-700 bg-neutral-900/40 p-4">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-white">User Controls</h3>
+                    <p className="mt-1 text-sm text-neutral-400">
+                      Update role and active state for {user.username} without leaving this Dokaflex
+                      surface.
+                    </p>
+                    <p className="mt-2 text-xs text-neutral-500">
+                      Last successful verification: {userSummary.lastLoginLabel}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-3">
+                    <label className="space-y-2 text-sm">
+                      <span className="text-neutral-300">Base role</span>
+                      <select
+                        value={roleDraft}
+                        onChange={(event) => setRoleDraft(event.target.value as BaseRole)}
+                        className="h-10 min-w-[180px] rounded-md border border-neutral-600 bg-neutral-700 px-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="USER">USER</option>
+                        <option value="TESTER">TESTER</option>
+                        <option value="BOSS">BOSS</option>
+                      </select>
+                    </label>
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() => void handleRoleUpdate()}
+                        disabled={isUpdatingUser}
+                        className="inline-flex h-10 items-center rounded-md bg-blue-600 px-4 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {isUpdatingUser ? "Updating..." : "Save Role"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleStatusToggle()}
+                        disabled={isUpdatingUser}
+                        className="inline-flex h-10 items-center rounded-md border border-neutral-600 bg-neutral-700 px-4 text-sm font-medium text-white transition-colors hover:border-neutral-500 disabled:opacity-50"
+                      >
+                        {isUpdatingUser
+                          ? "Updating..."
+                          : user.isActive
+                            ? "Disable User"
+                            : "Enable User"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div className="rounded-lg border border-neutral-700 bg-neutral-900/40">
                 <div className="border-b border-neutral-700 px-4 py-3">
                   <h3 className="text-sm font-semibold text-white">Current Overrides</h3>
@@ -573,6 +716,15 @@ function Badge({
     <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${toneClassName}`}>
       {children}
     </span>
+  );
+}
+
+function SummaryCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-neutral-700 bg-neutral-950/60 px-4 py-3">
+      <p className="text-xs uppercase tracking-wide text-neutral-500">{label}</p>
+      <p className="mt-2 text-sm font-medium text-white">{value}</p>
+    </div>
   );
 }
 

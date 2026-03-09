@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { authOptions } from "@/lib/adminAuth";
 import prisma from "@/lib/prisma";
 import { AccessControlServiceError, previewEffectiveAccess } from "@/lib/access-control/service";
 

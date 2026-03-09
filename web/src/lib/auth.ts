@@ -7,10 +7,8 @@ import crypto from 'crypto';
 export function verifySignature(payload: string, signature: string | null): boolean {
     if (!signature) return false;
 
-    const secret = process.env.PLUGIN_SECRET;
+    const secret = process.env.PLUGIN_SECRET?.trim();
     if (!secret) {
-        console.warn("WARNING: PLUGIN_SECRET is not set in environment variables.");
-        // In production, we should probably fail securely here.
         return false;
     }
 

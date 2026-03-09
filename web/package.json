@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsc -p tsconfig.test.json && node --test .test-dist/test/access-policy.test.js .test-dist/test/dashboard-dokaflex-admin.test.js"
+    "test": "tsc -p tsconfig.test.json && node --test .test-dist/test/access-policy.test.js .test-dist/test/dashboard-dokaflex-admin.test.js .test-dist/test/plugin-data.test.js .test-dist/test/ribbon-layout.test.js .test-dist/test/runtime-health.test.js"
   },
   "dependencies": {
     "@prisma/client": "^6.19.2",

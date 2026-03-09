@@ -1,11 +1,7 @@
 import { NextResponse } from "next/server";
 
-export const dynamic = "force-dynamic";
+import { buildHealthStatus } from "@/lib/runtime/status";
 
 export async function GET() {
-  return NextResponse.json({
-    status: "ok",
-    service: "pcad-license-server",
-    time: new Date().toISOString(),
-  });
+  return NextResponse.json(buildHealthStatus(), { status: 200 });
 }

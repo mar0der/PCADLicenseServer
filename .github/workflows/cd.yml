@@ -2,6 +2,11 @@ name: CD
 
 on:
   workflow_dispatch:
+    inputs:
+      git_ref:
+        description: Git ref to deploy for rollback or targeted redeploy
+        required: false
+        type: string
   push:
     branches:
       - main
@@ -33,9 +38,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.git_ref || github.sha }}
 
       - name: Verify deploy target exists
         run: test -f /opt/pcad/site/.env.server
+
+      - name: Show deploy ref
+        run: git rev-parse HEAD
 
       - name: Deploy
         run: bash scripts/deploy_pcad.sh

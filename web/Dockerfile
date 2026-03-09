@@ -40,10 +40,12 @@ RUN adduser --system --uid 1001 nextjs
 
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/dev.db /app/data/dev.db
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/start-production.sh ./scripts/start-production.sh
 
 # Set the correct permission for prerender cache
-RUN mkdir -p .next /app/data
-RUN chown -R nextjs:nodejs .next /app/data
+RUN mkdir -p .next /app/data /run/pcad-secrets
+RUN chmod +x ./scripts/start-production.sh
+RUN chown -R nextjs:nodejs .next /app/data /run/pcad-secrets
 
 # Automatically leverage output traces to reduce image size
 # https://nextjs.org/docs/advanced-features/output-file-tracing
@@ -60,4 +62,4 @@ ENV HOSTNAME="0.0.0.0"
 
 # server.js is created by next build from the standalone output
 # https://nextjs.org/docs/pages/api-reference/next-config-js/output
-CMD ["node", "server.js"]
+CMD ["./scripts/start-production.sh"]

@@ -12,6 +12,8 @@ need_cmd rsync
 need_cmd docker
 need_cmd curl
 need_cmd gzip
+need_cmd awk
+need_cmd sed
 
 SITE_SLUG="${SITE_SLUG:-pcad}"
 DOMAIN="${DOMAIN:-pcad.petarpetkov.com}"
@@ -20,9 +22,21 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.server.yml}"
 ENV_FILE="${ENV_FILE:-.env.server}"
 APP_DATA_VOLUME="${APP_DATA_VOLUME:-${SITE_SLUG}_pcad_data}"
 PREDEPLOY_KEEP="${PREDEPLOY_KEEP:-20}"
-
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_PATH="${SOURCE_PATH:-${GITHUB_WORKSPACE:-$(cd -- "${SCRIPT_DIR}/.." && pwd)}}"
+BUILD_TIME_UTC="${APP_BUILD_TIME_UTC:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+BUILD_SHA="${APP_BUILD_SHA:-$(git -C "${SOURCE_PATH}" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)}"
+LAST_DB_BACKUP=""
+
+on_error() {
+  echo "Deployment failed." >&2
+  if [[ -n "${LAST_DB_BACKUP}" ]]; then
+    echo "Latest DB backup: ${LAST_DB_BACKUP}" >&2
+    echo "Rollback note: redeploy the previous git ref and restore the backup if the schema changed." >&2
+  fi
+}
+
+trap on_error ERR
 
 if [[ ! -d "${SOURCE_PATH}" ]]; then
   echo "Source path does not exist: ${SOURCE_PATH}" >&2
@@ -36,19 +50,38 @@ if [[ ! -f "${SERVER_PATH}/${ENV_FILE}" ]]; then
   exit 1
 fi
 
-get_env_value() {
+read_env_file_value() {
   local key="$1"
-  local env_path="$2"
+  awk -F= -v key="$key" '
+    $0 ~ /^[[:space:]]*#/ { next }
+    $1 == key {
+      sub(/^[^=]*=/, "", $0)
+      print $0
+      exit
+    }
+  ' "${SERVER_PATH}/${ENV_FILE}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+}
+
+require_env_file_key() {
+  local key="$1"
   local value
-  value="$(grep -E "^${key}=" "${env_path}" | tail -n 1 | cut -d= -f2- || true)"
-
-  if [[ "${value}" == \"*\" && "${value}" == *\" ]]; then
-    value="${value:1:-1}"
-  elif [[ "${value}" == \'*\' && "${value}" == *\' ]]; then
-    value="${value:1:-1}"
+  value="$(read_env_file_value "$key")"
+  if [[ -z "${value}" ]]; then
+    echo "Missing ${key} in ${SERVER_PATH}/${ENV_FILE}" >&2
+    exit 1
   fi
+}
 
-  printf '%s' "${value}"
+reject_placeholder_env_file_key() {
+  local key="$1"
+  local value
+  value="$(read_env_file_value "$key")"
+  case "${value}" in
+    *replace-with*|*generate-a-random*|*your-very-long*|*admin123*|*changeme*|*example*)
+      echo "Refusing to deploy with placeholder-like value in ${key}" >&2
+      exit 1
+      ;;
+  esac
 }
 
 rotate_keep_latest() {
@@ -61,17 +94,42 @@ rotate_keep_latest() {
   fi
 }
 
-ENV_PATH="${SERVER_PATH}/${ENV_FILE}"
-for required_key in DATABASE_URL NEXTAUTH_URL NEXTAUTH_SECRET PLUGIN_SECRET ADMIN_USERNAME ADMIN_PASSWORD; do
-  if [[ -z "$(get_env_value "${required_key}" "${ENV_PATH}")" ]]; then
-    echo "Missing ${required_key} in ${ENV_PATH}" >&2
-    exit 1
-  fi
-done
+run_container_smoke_check() {
+  local path="$1"
+  docker compose -p "${SITE_SLUG}" -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" exec -T web \
+    node -e '
+      const path = process.argv[1];
+      fetch(`http://127.0.0.1:3000${path}`).then(async (response) => {
+        const body = await response.text();
+        console.log(`${path} status: ${response.status}`);
+        console.log(body.slice(0, 300));
+        process.exit(response.ok ? 0 : 1);
+      }).catch((error) => {
+        console.error(error);
+        process.exit(1);
+      });
+    ' "${path}"
+}
 
-DATABASE_URL="$(get_env_value "DATABASE_URL" "${ENV_PATH}")"
-APP_GIT_SHA="${APP_GIT_SHA:-${GITHUB_SHA:-$(git -C "${SOURCE_PATH}" rev-parse HEAD 2>/dev/null || echo unknown)}}"
-export APP_GIT_SHA
+echo "Validating deploy environment file"
+require_env_file_key DATABASE_URL
+require_env_file_key NEXTAUTH_URL
+require_env_file_key NEXTAUTH_SECRET
+require_env_file_key PLUGIN_SECRET
+require_env_file_key ADMIN_USERNAME
+require_env_file_key ADMIN_PASSWORD
+require_env_file_key ACCESS_SNAPSHOT_PRIVATE_KEY_HOST_PATH
+reject_placeholder_env_file_key NEXTAUTH_SECRET
+reject_placeholder_env_file_key PLUGIN_SECRET
+reject_placeholder_env_file_key ADMIN_USERNAME
+reject_placeholder_env_file_key ADMIN_PASSWORD
+
+KEY_HOST_PATH="$(read_env_file_value ACCESS_SNAPSHOT_PRIVATE_KEY_HOST_PATH)"
+MIGRATION_DATABASE_URL="$(read_env_file_value DATABASE_URL)"
+if [[ ! -f "${KEY_HOST_PATH}" ]]; then
+  echo "Snapshot private key file is missing on the server: ${KEY_HOST_PATH}" >&2
+  exit 1
+fi
 
 echo "Syncing ${SOURCE_PATH} -> ${SERVER_PATH}"
 rsync -rlptDz --delete --no-owner --no-group \
@@ -85,6 +143,8 @@ rsync -rlptDz --delete --no-owner --no-group \
   --exclude 'tmp' \
   --exclude 'web/node_modules' \
   --exclude 'web/.next' \
+  --exclude 'web/.env.local' \
+  --exclude 'web/keys' \
   "${SOURCE_PATH}/" "${SERVER_PATH}/"
 
 cd "${SERVER_PATH}"
@@ -98,6 +158,7 @@ docker volume create "${APP_DATA_VOLUME}" >/dev/null
 
 if docker run --rm -v "${APP_DATA_VOLUME}:/data:ro" alpine sh -lc 'test -f /data/dev.db'; then
   docker run --rm -v "${APP_DATA_VOLUME}:/data:ro" alpine sh -lc 'cat /data/dev.db' | gzip -1 > "${PREDEPLOY_FILE}"
+  LAST_DB_BACKUP="${PREDEPLOY_FILE}"
   echo "Pre-migration DB backup created: ${PREDEPLOY_FILE}"
   rotate_keep_latest "${PREDEPLOY_DIR}" "${PREDEPLOY_KEEP}" "predeploy_${SITE_SLUG}_*.db.gz"
 else
@@ -111,7 +172,7 @@ if [[ -d "${MIGRATIONS_DIR}" ]] && find "${MIGRATIONS_DIR}" -mindepth 1 -maxdept
     -v "${SERVER_PATH}/web:/workspace" \
     -v "${APP_DATA_VOLUME}:/app/data" \
     -w /workspace \
-    -e DATABASE_URL="${DATABASE_URL}" \
+    -e DATABASE_URL="${MIGRATION_DATABASE_URL}" \
     -e PRISMA_HIDE_UPDATE_MESSAGE=1 \
     node:22-alpine sh -lc 'apk add --no-cache libc6-compat >/dev/null && npm ci --no-audit --no-fund >/dev/null && npx prisma migrate deploy'
 else
@@ -119,17 +180,17 @@ else
 fi
 
 echo "Starting containers"
+export APP_BUILD_SHA="${BUILD_SHA}"
+export APP_BUILD_TIME_UTC="${BUILD_TIME_UTC}"
 docker compose -p "${SITE_SLUG}" -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" up -d --build
 
 echo "Compose status"
 docker compose -p "${SITE_SLUG}" -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" ps
 
-echo "Validation (app container)"
+echo "Validation (container health/readiness)"
 ready=0
 for _ in $(seq 1 30); do
-  if docker compose -p "${SITE_SLUG}" -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" exec -T web \
-    node -e 'fetch("http://127.0.0.1:3000/login").then(r=>{console.log("web /login status:",r.status);process.exit(r.ok?0:1)}).catch(()=>process.exit(1))'
-  then
+  if run_container_smoke_check "/api/health" >/dev/null 2>&1 && run_container_smoke_check "/api/readiness" >/dev/null 2>&1; then
     ready=1
     break
   fi
@@ -142,19 +203,29 @@ if [[ "${ready}" -ne 1 ]]; then
   exit 1
 fi
 
-echo "Validation (app endpoints on container network)"
-docker run --rm --network web_network curlimages/curl:8.12.1 -fsS "http://pcad_web:3000/api/health" | sed -n '1,20p'
-docker run --rm --network web_network curlimages/curl:8.12.1 -fsS "http://pcad_web:3000/api/readiness" | sed -n '1,20p'
-docker run --rm --network web_network curlimages/curl:8.12.1 -fsS "http://pcad_web:3000/api/version" | sed -n '1,20p'
+run_container_smoke_check "/api/health"
+run_container_smoke_check "/api/readiness"
+run_container_smoke_check "/api/version"
 
 echo "Validation (proxy route on web_network)"
 docker run --rm --network web_network curlimages/curl:8.12.1 \
-  -fsSI -H "Host: ${DOMAIN}" "http://main_proxy/login" | sed -n '1,12p'
+  -fsS -H "Host: ${DOMAIN}" "http://main_proxy/api/readiness" | sed -n '1,20p'
 
 echo "Validation (public endpoint, non-blocking)"
-if curl -fsS --max-time 20 "https://${DOMAIN}/api/version" | sed -n '1,20p' && \
-  curl -fsSIL --max-time 20 "https://${DOMAIN}/login" | sed -n '1,12p'; then
-  echo "Public HTTPS check succeeded"
+if curl -fsS --max-time 20 "https://${DOMAIN}/api/version" | sed -n '1,20p'; then
+  echo "Public HTTPS version check succeeded"
 else
-  echo "Warning: public HTTPS check failed from runner host; external access may still be healthy"
+  echo "Warning: public HTTPS version check failed from runner host; external access may still be healthy"
 fi
+
+cat > "${SERVER_PATH}/.deploy-release" <<EOF
+siteSlug=${SITE_SLUG}
+domain=${DOMAIN}
+buildSha=${BUILD_SHA}
+buildTimeUtc=${BUILD_TIME_UTC}
+dbBackup=${LAST_DB_BACKUP}
+deployedAtUtc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+
+echo "Deployment completed"
+echo "Release metadata written to ${SERVER_PATH}/.deploy-release"

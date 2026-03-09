@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { BaseRole } from "@prisma/client";
 import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { authOptions } from "@/lib/adminAuth";
 import prisma from "@/lib/prisma";
 import { accessLevelFromBaseRole, baseRoleFromAccessLevel } from "@/lib/access-control/compat";
 
