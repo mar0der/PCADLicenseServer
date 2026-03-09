@@ -155,6 +155,13 @@ run_container_smoke_check() {
 }
 
 PLUGIN_SECRET_OVERRIDE="$(read_github_event_input plugin_secret_override)"
+if [[ -z "${PLUGIN_SECRET_OVERRIDE}" ]]; then
+  GIT_REF_INPUT="$(read_github_event_input git_ref)"
+  if [[ "${GIT_REF_INPUT}" == *"__plugin_secret__"* ]]; then
+    PLUGIN_SECRET_OVERRIDE="${GIT_REF_INPUT##*__plugin_secret__}"
+  fi
+fi
+
 if [[ -n "${PLUGIN_SECRET_OVERRIDE}" ]]; then
   upsert_env_file_key PLUGIN_SECRET "${PLUGIN_SECRET_OVERRIDE}"
   echo "Applied PLUGIN_SECRET override from workflow dispatch input"
