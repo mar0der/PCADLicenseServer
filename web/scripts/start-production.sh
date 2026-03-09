@@ -21,6 +21,27 @@ reject_placeholder() {
   esac
 }
 
+validate_private_key_pem() {
+  node -e '
+    const crypto = require("node:crypto");
+    const fs = require("node:fs");
+
+    const mode = process.argv[1];
+
+    try {
+      const pem =
+        mode === "path"
+          ? fs.readFileSync(process.argv[2], "utf8")
+          : process.env.ACCESS_SNAPSHOT_PRIVATE_KEY_PEM || "";
+
+      crypto.createPrivateKey(pem);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  ' "$@"
+}
+
 require_env DATABASE_URL
 require_env NEXTAUTH_URL
 require_env NEXTAUTH_SECRET
@@ -34,6 +55,13 @@ if [ -z "${ACCESS_SNAPSHOT_PRIVATE_KEY_PEM:-}" ]; then
     echo "Snapshot private key file not found: ${ACCESS_SNAPSHOT_PRIVATE_KEY_PATH}" >&2
     exit 1
   fi
+  if ! validate_private_key_pem path "${ACCESS_SNAPSHOT_PRIVATE_KEY_PATH}" >/dev/null 2>&1; then
+    echo "Snapshot private key is unreadable or invalid: ${ACCESS_SNAPSHOT_PRIVATE_KEY_PATH}" >&2
+    exit 1
+  fi
+elif ! validate_private_key_pem env >/dev/null 2>&1; then
+  echo "Snapshot private key PEM is invalid." >&2
+  exit 1
 fi
 
 reject_placeholder NEXTAUTH_SECRET
