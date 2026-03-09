@@ -14,6 +14,7 @@ need_cmd curl
 need_cmd gzip
 need_cmd awk
 need_cmd sed
+need_cmd openssl
 
 SITE_SLUG="${SITE_SLUG:-pcad}"
 DOMAIN="${DOMAIN:-pcad.petarpetkov.com}"
@@ -72,19 +73,6 @@ require_env_file_key() {
   fi
 }
 
-upsert_env_file_key() {
-  local key="$1"
-  local value="$2"
-  local escaped_value
-  escaped_value="$(printf '%s' "${value}" | sed -e 's/[\/&]/\\&/g')"
-
-  if grep -Eq "^[[:space:]]*${key}=" "${SERVER_PATH}/${ENV_FILE}"; then
-    sed -i -E "s|^[[:space:]]*${key}=.*$|${key}=${escaped_value}|" "${SERVER_PATH}/${ENV_FILE}"
-  else
-    printf '\n%s=%s\n' "${key}" "${value}" >> "${SERVER_PATH}/${ENV_FILE}"
-  fi
-}
-
 reject_placeholder_env_file_key() {
   local key="$1"
   local value
@@ -95,36 +83,6 @@ reject_placeholder_env_file_key() {
       exit 1
       ;;
   esac
-}
-
-read_github_event_input() {
-  local key="$1"
-
-  if [[ -z "${GITHUB_EVENT_PATH:-}" || ! -f "${GITHUB_EVENT_PATH}" ]]; then
-    return 0
-  fi
-
-  if ! command -v node >/dev/null 2>&1; then
-    return 0
-  fi
-
-  GITHUB_EVENT_INPUT_KEY="${key}" node <<'EOF'
-const fs = require("fs");
-
-const eventPath = process.env.GITHUB_EVENT_PATH;
-const inputKey = process.env.GITHUB_EVENT_INPUT_KEY;
-
-if (!eventPath || !inputKey) {
-  process.exit(0);
-}
-
-const event = JSON.parse(fs.readFileSync(eventPath, "utf8"));
-const value = event?.inputs?.[inputKey];
-
-if (typeof value === "string") {
-  process.stdout.write(value);
-}
-EOF
 }
 
 rotate_keep_latest() {
@@ -154,23 +112,6 @@ run_container_smoke_check() {
     ' "${path}"
 }
 
-RUN_SIGNING_CONTRACT_INSPECT=0
-PLUGIN_SECRET_OVERRIDE="$(read_github_event_input plugin_secret_override)"
-if [[ -z "${PLUGIN_SECRET_OVERRIDE}" ]]; then
-  GIT_REF_INPUT="$(read_github_event_input git_ref)"
-  if [[ "${GIT_REF_INPUT}" == *"__plugin_secret__"* ]]; then
-    PLUGIN_SECRET_OVERRIDE="${GIT_REF_INPUT##*__plugin_secret__}"
-  fi
-  if [[ "${GIT_REF_INPUT}" == *"__inspect_signing_contract__"* ]]; then
-    RUN_SIGNING_CONTRACT_INSPECT=1
-  fi
-fi
-
-if [[ -n "${PLUGIN_SECRET_OVERRIDE}" ]]; then
-  upsert_env_file_key PLUGIN_SECRET "${PLUGIN_SECRET_OVERRIDE}"
-  echo "Applied PLUGIN_SECRET override from workflow dispatch input"
-fi
-
 echo "Validating deploy environment file"
 require_env_file_key DATABASE_URL
 require_env_file_key NEXTAUTH_URL
@@ -186,77 +127,29 @@ reject_placeholder_env_file_key ADMIN_PASSWORD
 
 KEY_HOST_PATH="$(read_env_file_value ACCESS_SNAPSHOT_PRIVATE_KEY_HOST_PATH)"
 MIGRATION_DATABASE_URL="$(read_env_file_value DATABASE_URL)"
+PUBLIC_CONTRACT_PATH="${SOURCE_PATH}/docs/contracts/access-snapshot.public.pem"
 if [[ ! -f "${KEY_HOST_PATH}" ]]; then
   echo "Snapshot private key file is missing on the server: ${KEY_HOST_PATH}" >&2
   exit 1
 fi
+if [[ ! -f "${PUBLIC_CONTRACT_PATH}" ]]; then
+  echo "Missing committed public key contract artifact: ${PUBLIC_CONTRACT_PATH}" >&2
+  exit 1
+fi
 
-if [[ "${RUN_SIGNING_CONTRACT_INSPECT}" -eq 1 ]]; then
-  KEY_HOST_PATH="${KEY_HOST_PATH}" node <<'EOF'
-const crypto = require("crypto");
-const fs = require("fs");
+HOST_PUBLIC_KEY_SHA="$(openssl pkey -in "${KEY_HOST_PATH}" -pubout -outform DER 2>/dev/null | openssl dgst -sha256 | awk '{print $2}')"
+CONTRACT_PUBLIC_KEY_SHA="$(openssl pkey -pubin -in "${PUBLIC_CONTRACT_PATH}" -outform DER 2>/dev/null | openssl dgst -sha256 | awk '{print $2}')"
 
-const privateKeyPem = fs.readFileSync(process.env.KEY_HOST_PATH, "utf8");
-const publicKeyPem = crypto.createPublicKey(privateKeyPem).export({
-  type: "spki",
-  format: "pem",
-});
+if [[ -z "${HOST_PUBLIC_KEY_SHA}" || -z "${CONTRACT_PUBLIC_KEY_SHA}" ]]; then
+  echo "Failed to derive signing key fingerprints for host/contract validation." >&2
+  exit 1
+fi
 
-const payload = {
-  snapshotId: "00000000-0000-4000-8000-000000000001",
-  policyVersion: 1,
-  pluginSlug: "dokaflex",
-  username: "local-test-user",
-  machineFingerprint: "machine-fingerprint-example",
-  machineName: "DEV-PC-01",
-  revitVersion: "2024",
-  baseRole: "TESTER",
-  allowedCommandKeys: ["DF.GENERATE_BEAM", "DF.SMART_ARRAY"],
-  issuedAtUtc: "2026-03-08T10:00:00Z",
-  refreshAfterUtc: "2026-03-09T10:00:00Z",
-  graceUntilUtc: "2026-03-15T10:00:00Z",
-};
-
-const canonicalPayload = JSON.stringify({
-  snapshotId: payload.snapshotId,
-  policyVersion: payload.policyVersion,
-  pluginSlug: payload.pluginSlug,
-  username: payload.username,
-  machineFingerprint: payload.machineFingerprint,
-  machineName: payload.machineName,
-  revitVersion: payload.revitVersion,
-  baseRole: payload.baseRole,
-  allowedCommandKeys: Array.from(new Set(payload.allowedCommandKeys)).sort(),
-  issuedAtUtc: payload.issuedAtUtc,
-  refreshAfterUtc: payload.refreshAfterUtc,
-  graceUntilUtc: payload.graceUntilUtc,
-});
-
-const signature = crypto
-  .sign("RSA-SHA256", Buffer.from(canonicalPayload, "utf8"), privateKeyPem)
-  .toString("base64url");
-
-console.log("BEGIN_LIVE_PUBLIC_KEY");
-process.stdout.write(publicKeyPem);
-if (!publicKeyPem.endsWith("\n")) {
-  process.stdout.write("\n");
-}
-console.log("END_LIVE_PUBLIC_KEY");
-console.log("BEGIN_LIVE_ACCESS_EXAMPLE_JSON");
-console.log(
-  JSON.stringify(
-    {
-      format: "pcad-access-snapshot/v1",
-      payload,
-      signature,
-    },
-    null,
-    2
-  )
-);
-console.log("END_LIVE_ACCESS_EXAMPLE_JSON");
-EOF
-  exit 0
+if [[ "${HOST_PUBLIC_KEY_SHA}" != "${CONTRACT_PUBLIC_KEY_SHA}" ]]; then
+  echo "Signing key mismatch between ${KEY_HOST_PATH} and ${PUBLIC_CONTRACT_PATH}" >&2
+  echo "Host public key sha256: ${HOST_PUBLIC_KEY_SHA}" >&2
+  echo "Repo contract sha256: ${CONTRACT_PUBLIC_KEY_SHA}" >&2
+  exit 1
 fi
 
 echo "Syncing ${SOURCE_PATH} -> ${SERVER_PATH}"
