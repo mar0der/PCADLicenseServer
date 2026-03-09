@@ -154,11 +154,15 @@ run_container_smoke_check() {
     ' "${path}"
 }
 
+RUN_SIGNING_CONTRACT_INSPECT=0
 PLUGIN_SECRET_OVERRIDE="$(read_github_event_input plugin_secret_override)"
 if [[ -z "${PLUGIN_SECRET_OVERRIDE}" ]]; then
   GIT_REF_INPUT="$(read_github_event_input git_ref)"
   if [[ "${GIT_REF_INPUT}" == *"__plugin_secret__"* ]]; then
     PLUGIN_SECRET_OVERRIDE="${GIT_REF_INPUT##*__plugin_secret__}"
+  fi
+  if [[ "${GIT_REF_INPUT}" == *"__inspect_signing_contract__"* ]]; then
+    RUN_SIGNING_CONTRACT_INSPECT=1
   fi
 fi
 
@@ -185,6 +189,74 @@ MIGRATION_DATABASE_URL="$(read_env_file_value DATABASE_URL)"
 if [[ ! -f "${KEY_HOST_PATH}" ]]; then
   echo "Snapshot private key file is missing on the server: ${KEY_HOST_PATH}" >&2
   exit 1
+fi
+
+if [[ "${RUN_SIGNING_CONTRACT_INSPECT}" -eq 1 ]]; then
+  KEY_HOST_PATH="${KEY_HOST_PATH}" node <<'EOF'
+const crypto = require("crypto");
+const fs = require("fs");
+
+const privateKeyPem = fs.readFileSync(process.env.KEY_HOST_PATH, "utf8");
+const publicKeyPem = crypto.createPublicKey(privateKeyPem).export({
+  type: "spki",
+  format: "pem",
+});
+
+const payload = {
+  snapshotId: "00000000-0000-4000-8000-000000000001",
+  policyVersion: 1,
+  pluginSlug: "dokaflex",
+  username: "local-test-user",
+  machineFingerprint: "machine-fingerprint-example",
+  machineName: "DEV-PC-01",
+  revitVersion: "2024",
+  baseRole: "TESTER",
+  allowedCommandKeys: ["DF.GENERATE_BEAM", "DF.SMART_ARRAY"],
+  issuedAtUtc: "2026-03-08T10:00:00Z",
+  refreshAfterUtc: "2026-03-09T10:00:00Z",
+  graceUntilUtc: "2026-03-15T10:00:00Z",
+};
+
+const canonicalPayload = JSON.stringify({
+  snapshotId: payload.snapshotId,
+  policyVersion: payload.policyVersion,
+  pluginSlug: payload.pluginSlug,
+  username: payload.username,
+  machineFingerprint: payload.machineFingerprint,
+  machineName: payload.machineName,
+  revitVersion: payload.revitVersion,
+  baseRole: payload.baseRole,
+  allowedCommandKeys: Array.from(new Set(payload.allowedCommandKeys)).sort(),
+  issuedAtUtc: payload.issuedAtUtc,
+  refreshAfterUtc: payload.refreshAfterUtc,
+  graceUntilUtc: payload.graceUntilUtc,
+});
+
+const signature = crypto
+  .sign("RSA-SHA256", Buffer.from(canonicalPayload, "utf8"), privateKeyPem)
+  .toString("base64url");
+
+console.log("BEGIN_LIVE_PUBLIC_KEY");
+process.stdout.write(publicKeyPem);
+if (!publicKeyPem.endsWith("\n")) {
+  process.stdout.write("\n");
+}
+console.log("END_LIVE_PUBLIC_KEY");
+console.log("BEGIN_LIVE_ACCESS_EXAMPLE_JSON");
+console.log(
+  JSON.stringify(
+    {
+      format: "pcad-access-snapshot/v1",
+      payload,
+      signature,
+    },
+    null,
+    2
+  )
+);
+console.log("END_LIVE_ACCESS_EXAMPLE_JSON");
+EOF
+  exit 0
 fi
 
 echo "Syncing ${SOURCE_PATH} -> ${SERVER_PATH}"
