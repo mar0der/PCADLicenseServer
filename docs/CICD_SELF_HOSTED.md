@@ -1,66 +1,119 @@
 # PCAD CI/CD (Self-Hosted Runner)
 
-This repo uses:
+This repository deploys to production through GitHub Actions, using a self-hosted runner on `the18th`.
 
-- CI: `.github/workflows/ci.yml` on `ubuntu-latest`
-- CD: `.github/workflows/cd.yml` on self-hosted runner labels:
-  - `self-hosted`
-  - `linux`
-  - `the18th`
+Current production target:
 
-## 1) Runner Setup (the18th)
+- Domain: `https://pcad.petarpetkov.com`
+- Server path: `/opt/pcad/site`
+- Compose project: `pcad`
+- Runtime container: `pcad_web`
+- GitHub repository: `mar0der/PCADLicenseServer`
 
-Register a new runner for `mar0der/PCADLicenseServer` on `the18th` with label `the18th`.
+## Workflow Entry Points
 
-In GitHub:
+- `push` to `main`: automatic production deploy
+- `workflow_dispatch` on `.github/workflows/cd.yml`: manual production deploy from GitHub
 
-1. Open repository settings.
-2. Go to `Actions -> Runners`.
-3. Click `New self-hosted runner`.
-4. Choose Linux x64 and copy the config command.
+CD is pinned to runner labels:
 
-On `the18th`, run the copied command as `gha-runner` inside a dedicated folder, for example:
+- `self-hosted`
+- `Linux`
+- `the18th`
+- `pcad`
 
-```bash
-sudo -u gha-runner -H bash -lc '
-mkdir -p /opt/github-runners/pcad/actions-runner &&
-cd /opt/github-runners/pcad/actions-runner
-# download + extract runner package
-# run ./config.sh --url ... --token ... --labels the18th
-'
+## Runner Requirements
+
+Expected service on `the18th`:
+
+- `actions.runner.mar0der-PCADLicenseServer.pcad-runner.service`
+
+Expected effective runner user:
+
+- `gha-runner`
+
+Expected runner capabilities:
+
+- can read/write `/opt/pcad/site`
+- can read/write `/srv/backups/thisServer/pcad.petarpetkov.com/db/predeploy`
+- can run Docker and Docker Compose
+
+Runner registration should target this repository and include the `pcad` label. The runner stays on the host; it is not recreated per deploy.
+
+## Required Host State
+
+These items are not stored in git and must exist on `the18th`:
+
+- `/opt/pcad/site/.env.server`
+- Docker volume `pcad_pcad_data`
+- Docker network `web_network`
+- Reverse proxy config routing `pcad.petarpetkov.com` to `pcad_web:3000`
+- TLS certs for `pcad.petarpetkov.com`
+- Backup root `/srv/backups/thisServer/pcad.petarpetkov.com`
+
+Required production env keys in `/opt/pcad/site/.env.server`:
+
+```dotenv
+DATABASE_URL=file:/app/data/dev.db
+NEXTAUTH_URL=https://pcad.petarpetkov.com
+NEXTAUTH_SECRET=replace-me
+PLUGIN_SECRET=replace-me
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=replace-me
 ```
 
-Install and start service:
+`DATABASE_URL` must point at the writable database path mounted from the persistent volume. Production must not rely on a hardcoded fallback inside the image.
 
-```bash
-cd /opt/github-runners/pcad/actions-runner
-sudo ./svc.sh install gha-runner
-sudo ./svc.sh start
-```
+## What The Deploy Job Does
 
-## 2) Required Server State
+`.github/workflows/cd.yml` runs `scripts/deploy_pcad.sh` on the self-hosted runner. The deploy script:
 
-- Deploy path exists: `/opt/pcad/site`
-- File exists: `/opt/pcad/site/.env.server`
-- Docker + Docker Compose installed
-- Main proxy already routes `pcad.petarpetkov.com` to `pcad_web:3000`
-
-## 3) Deploy Behavior
-
-`scripts/deploy_pcad.sh` does:
-
-1. Rsync repo to `/opt/pcad/site` (excludes `.git`, `node_modules`, `.next`, temp artifacts).
-2. Create pre-migration DB safety backup:
+1. Verifies the required production env keys exist.
+2. Rsyncs the repo into `/opt/pcad/site`, excluding `.git`, `.github`, `.env.server`, `node_modules`, `.next`, logs, and temp artifacts.
+3. Creates a pre-migration database backup:
    - `/srv/backups/thisServer/pcad.petarpetkov.com/db/predeploy/predeploy_*.db.gz`
-3. Run Prisma migrations against live DB volume (when `web/prisma/migrations/*` exist):
-   - `npx prisma migrate deploy`
-4. Run:
+4. Runs `npx prisma migrate deploy` against the live `DATABASE_URL`.
+5. Rebuilds and restarts the single application container:
    - `docker compose -p pcad -f docker-compose.server.yml --env-file .env.server up -d --build`
-5. Validate:
-   - `http://pcad.petarpetkov.com/` (expects redirect)
-   - `https://pcad.petarpetkov.com/login` (expects `200`)
+6. Validates the live container and proxy path with:
+   - `/login`
+   - `/api/health`
+   - `/api/readiness`
+   - `/api/version`
 
-## 4) How To Trigger
+`APP_GIT_SHA` is injected by the deploy script so `/api/version` can report the deployed commit.
 
-- Push to `main` (auto deploy)
-- Or run `CD` manually from the GitHub Actions tab (`workflow_dispatch`)
+## First Deploy Bootstrap
+
+The first production setup still requires host access to create the base state:
+
+1. Install Docker / Docker Compose.
+2. Create the `gha-runner` user and register the GitHub runner.
+3. Create `/opt/pcad/site`.
+4. Create `/opt/pcad/site/.env.server`.
+5. Create or confirm `web_network`.
+6. Configure the reverse proxy and TLS for `pcad.petarpetkov.com`.
+7. Ensure backup directories are writable by the runner.
+
+After that bootstrap, normal deploys are repo-driven through GitHub only.
+
+## Smoke Test Commands
+
+These checks reflect the expected steady state after a successful deploy:
+
+```bash
+curl -fsS https://pcad.petarpetkov.com/api/health
+curl -fsS https://pcad.petarpetkov.com/api/readiness
+curl -fsS https://pcad.petarpetkov.com/api/version
+curl -fsSIL https://pcad.petarpetkov.com/login
+```
+
+If dashboard auth needs to be tested without a browser, use the NextAuth credential flow with a CSRF token and cookie jar.
+
+## Failure Handling
+
+If `prisma migrate deploy` fails, the deploy job stops before the new container rollout completes. Restore is done from:
+
+- `/srv/backups/thisServer/pcad.petarpetkov.com/db/predeploy/`
+
+See `docs/PRODUCTION_WORKFLOW.md` for the full rollback flow.

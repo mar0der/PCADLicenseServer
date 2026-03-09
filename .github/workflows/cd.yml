@@ -19,6 +19,7 @@ jobs:
       - self-hosted
       - Linux
       - the18th
+      - pcad
     timeout-minutes: 45
     environment:
       name: production

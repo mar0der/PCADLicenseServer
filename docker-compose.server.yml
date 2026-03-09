@@ -7,12 +7,13 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      DATABASE_URL: file:/app/data/dev.db
+      DATABASE_URL: ${DATABASE_URL}
       NEXTAUTH_URL: ${NEXTAUTH_URL}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
       PLUGIN_SECRET: ${PLUGIN_SECRET}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      APP_GIT_SHA: ${APP_GIT_SHA:-unknown}
     volumes:
       - pcad_data:/app/data
     networks:
