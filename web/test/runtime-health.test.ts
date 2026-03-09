@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -25,7 +26,7 @@ test("detectRuntimeMode follows the server node environment", () => {
 test("validateServerRuntimeEnv accepts a complete production config", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcad-runtime-"));
   const privateKeyPath = path.join(tempDir, "access-snapshot.private.pem");
-  fs.writeFileSync(privateKeyPath, "-----BEGIN PRIVATE KEY-----\nTEST\n-----END PRIVATE KEY-----\n");
+  fs.writeFileSync(privateKeyPath, createTestPrivateKeyPem());
 
   const report = validateServerRuntimeEnv(
     {
@@ -120,6 +121,7 @@ test("readiness returns not_ready when runtime config is invalid", async () => {
 });
 
 test("readiness returns ready only when runtime config and database checks succeed", async () => {
+  const privateKeyPem = createTestPrivateKeyPem();
   const readiness = await buildReadinessStatus({
     env: {
       NODE_ENV: "production",
@@ -129,7 +131,7 @@ test("readiness returns ready only when runtime config and database checks succe
       PLUGIN_SECRET: "super-secret-plugin-value",
       ADMIN_USERNAME: "pcad-admin",
       ADMIN_PASSWORD: "super-secret-admin-password",
-      ACCESS_SNAPSHOT_PRIVATE_KEY_PEM: "-----BEGIN PRIVATE KEY-----\nTEST\n-----END PRIVATE KEY-----",
+      ACCESS_SNAPSHOT_PRIVATE_KEY_PEM: privateKeyPem,
     },
     now: new Date("2026-03-09T10:30:00Z"),
     databaseCheck: async () => undefined,
@@ -143,6 +145,7 @@ test("readiness returns ready only when runtime config and database checks succe
 });
 
 test("readiness reports database failures without leaking internals", async () => {
+  const privateKeyPem = createTestPrivateKeyPem();
   const readiness = await buildReadinessStatus({
     env: {
       NODE_ENV: "production",
@@ -152,7 +155,7 @@ test("readiness reports database failures without leaking internals", async () =
       PLUGIN_SECRET: "super-secret-plugin-value",
       ADMIN_USERNAME: "pcad-admin",
       ADMIN_PASSWORD: "super-secret-admin-password",
-      ACCESS_SNAPSHOT_PRIVATE_KEY_PEM: "-----BEGIN PRIVATE KEY-----\nTEST\n-----END PRIVATE KEY-----",
+      ACCESS_SNAPSHOT_PRIVATE_KEY_PEM: privateKeyPem,
     },
     databaseCheck: async () => {
       throw new Error("sqlite is locked");
@@ -164,3 +167,62 @@ test("readiness reports database failures without leaking internals", async () =
   assert.equal(readiness.checks.database, "failed");
   assert.deepEqual(readiness.issues, ["Database connection check failed."]);
 });
+
+test("validateServerRuntimeEnv rejects unreadable signing key paths", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcad-runtime-"));
+  const privateKeyPath = path.join(tempDir, "access-snapshot.private.pem");
+  fs.writeFileSync(privateKeyPath, createTestPrivateKeyPem());
+  fs.chmodSync(privateKeyPath, 0o000);
+
+  try {
+    const report = validateServerRuntimeEnv(
+      {
+        NODE_ENV: "production",
+        DATABASE_URL: "file:/app/data/dev.db",
+        NEXTAUTH_URL: "https://pcad.example.com",
+        NEXTAUTH_SECRET: "super-secret-nextauth-value",
+        PLUGIN_SECRET: "super-secret-plugin-value",
+        ADMIN_USERNAME: "pcad-admin",
+        ADMIN_PASSWORD: "super-secret-admin-password",
+        ACCESS_SNAPSHOT_PRIVATE_KEY_PATH: privateKeyPath,
+      },
+      {
+        cwd: tempDir,
+      }
+    );
+
+    assert.equal(report.isValidForStartup, false);
+    assert.equal(
+      report.issues.some((issue) => issue.code === "ACCESS_SNAPSHOT_PRIVATE_KEY_PATH_UNREADABLE"),
+      true
+    );
+  } finally {
+    fs.chmodSync(privateKeyPath, 0o600);
+  }
+});
+
+test("validateServerRuntimeEnv rejects invalid private key PEM input", () => {
+  const report = validateServerRuntimeEnv({
+    NODE_ENV: "production",
+    DATABASE_URL: "file:/app/data/dev.db",
+    NEXTAUTH_URL: "https://pcad.example.com",
+    NEXTAUTH_SECRET: "super-secret-nextauth-value",
+    PLUGIN_SECRET: "super-secret-plugin-value",
+    ADMIN_USERNAME: "pcad-admin",
+    ADMIN_PASSWORD: "super-secret-admin-password",
+    ACCESS_SNAPSHOT_PRIVATE_KEY_PEM: "not-a-real-private-key",
+  });
+
+  assert.equal(report.isValidForStartup, false);
+  assert.equal(
+    report.issues.some((issue) => issue.code === "ACCESS_SNAPSHOT_PRIVATE_KEY_PEM_INVALID"),
+    true
+  );
+});
+
+function createTestPrivateKeyPem(): string {
+  return crypto.generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({
+    format: "pem",
+    type: "pkcs8",
+  }).toString();
+}

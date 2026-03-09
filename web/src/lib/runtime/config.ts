@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 
 export const PRODUCTION_REQUIRED_ENV_VARS = [
@@ -139,12 +140,12 @@ export function validateServerRuntimeEnv(
   }
 
   if (accessSnapshotPrivateKeyPem) {
-    if (!accessSnapshotPrivateKeyPem.includes("BEGIN PRIVATE KEY")) {
-      issues.push({
-        code: "ACCESS_SNAPSHOT_PRIVATE_KEY_PEM_INVALID",
-        message: "ACCESS_SNAPSHOT_PRIVATE_KEY_PEM must contain a PEM private key.",
-      });
-    }
+    validatePrivateKeyPem(
+      issues,
+      "ACCESS_SNAPSHOT_PRIVATE_KEY_PEM_INVALID",
+      "ACCESS_SNAPSHOT_PRIVATE_KEY_PEM must contain a usable PEM private key.",
+      accessSnapshotPrivateKeyPem
+    );
   } else if (accessSnapshotPrivateKeyPath && requireSigningKeyFile) {
     const resolvedPath = path.isAbsolute(accessSnapshotPrivateKeyPath)
       ? accessSnapshotPrivateKeyPath
@@ -155,6 +156,27 @@ export function validateServerRuntimeEnv(
         code: "ACCESS_SNAPSHOT_PRIVATE_KEY_PATH_MISSING",
         message: "ACCESS_SNAPSHOT_PRIVATE_KEY_PATH does not point to an existing file.",
       });
+    } else {
+      let privateKeyPemFromFile: string;
+
+      try {
+        privateKeyPemFromFile = fs.readFileSync(resolvedPath, "utf8");
+      } catch {
+        issues.push({
+          code: "ACCESS_SNAPSHOT_PRIVATE_KEY_PATH_UNREADABLE",
+          message: "ACCESS_SNAPSHOT_PRIVATE_KEY_PATH is not readable by the runtime user.",
+        });
+        privateKeyPemFromFile = "";
+      }
+
+      if (privateKeyPemFromFile) {
+        validatePrivateKeyPem(
+          issues,
+          "ACCESS_SNAPSHOT_PRIVATE_KEY_PATH_INVALID",
+          "ACCESS_SNAPSHOT_PRIVATE_KEY_PATH must point to a usable PEM private key.",
+          privateKeyPemFromFile
+        );
+      }
     }
   }
 
@@ -240,4 +262,17 @@ function trimEnv(value?: string): string | null {
 
   const trimmedValue = value.trim();
   return trimmedValue ? trimmedValue : null;
+}
+
+function validatePrivateKeyPem(
+  issues: RuntimeValidationIssue[],
+  code: string,
+  message: string,
+  privateKeyPem: string
+): void {
+  try {
+    crypto.createPrivateKey(privateKeyPem);
+  } catch {
+    issues.push({ code, message });
+  }
 }

@@ -26,6 +26,7 @@ Notes:
 
 - `DATABASE_URL` is mandatory in production. The deploy path and container runtime no longer fall back to an implicit SQLite location.
 - The compose file mounts `ACCESS_SNAPSHOT_PRIVATE_KEY_HOST_PATH` into the container at `/run/pcad-secrets/access-snapshot.private.pem`.
+- `docs/contracts/access-snapshot.public.pem` is the client trust anchor for signed snapshots and must match the server private key configured on the host.
 - Build metadata (`APP_BUILD_SHA`, `APP_BUILD_TIME_UTC`) is injected by the deploy script and does not need to be stored in `.env.server`.
 - Do not leave placeholder/example values in `.env.server`.
 
@@ -49,6 +50,7 @@ Notes:
 2. The deploy script will:
    - validate `.env.server`
    - confirm the signing key file exists
+   - confirm the server signing key matches `docs/contracts/access-snapshot.public.pem`
    - rsync the repo to `/opt/pcad/site`
    - create a pre-migration DB backup
    - run `prisma migrate deploy`
@@ -107,3 +109,5 @@ When Dokaflex is switched from localhost to the hosted server, the plugin should
 - `POST /api/plugin/usage/batch`
 
 The plugin must keep using the same HMAC request model and the committed public key contract artifacts when validating signed snapshots.
+
+If the signing key is ever rotated intentionally, update `docs/contracts/access-snapshot.public.pem` in the same change and redistribute that public key to Dokaflex clients before switching them to the live URL.

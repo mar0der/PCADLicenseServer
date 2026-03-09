@@ -14,6 +14,7 @@ need_cmd curl
 need_cmd gzip
 need_cmd awk
 need_cmd sed
+need_cmd openssl
 
 SITE_SLUG="${SITE_SLUG:-pcad}"
 DOMAIN="${DOMAIN:-pcad.petarpetkov.com}"
@@ -126,8 +127,28 @@ reject_placeholder_env_file_key ADMIN_PASSWORD
 
 KEY_HOST_PATH="$(read_env_file_value ACCESS_SNAPSHOT_PRIVATE_KEY_HOST_PATH)"
 MIGRATION_DATABASE_URL="$(read_env_file_value DATABASE_URL)"
+PUBLIC_CONTRACT_PATH="${SOURCE_PATH}/docs/contracts/access-snapshot.public.pem"
 if [[ ! -f "${KEY_HOST_PATH}" ]]; then
   echo "Snapshot private key file is missing on the server: ${KEY_HOST_PATH}" >&2
+  exit 1
+fi
+if [[ ! -f "${PUBLIC_CONTRACT_PATH}" ]]; then
+  echo "Missing committed public key contract artifact: ${PUBLIC_CONTRACT_PATH}" >&2
+  exit 1
+fi
+
+HOST_PUBLIC_KEY_SHA="$(openssl pkey -in "${KEY_HOST_PATH}" -pubout -outform DER 2>/dev/null | openssl dgst -sha256 | awk '{print $2}')"
+CONTRACT_PUBLIC_KEY_SHA="$(openssl pkey -pubin -in "${PUBLIC_CONTRACT_PATH}" -outform DER 2>/dev/null | openssl dgst -sha256 | awk '{print $2}')"
+
+if [[ -z "${HOST_PUBLIC_KEY_SHA}" || -z "${CONTRACT_PUBLIC_KEY_SHA}" ]]; then
+  echo "Failed to derive signing key fingerprints for host/contract validation." >&2
+  exit 1
+fi
+
+if [[ "${HOST_PUBLIC_KEY_SHA}" != "${CONTRACT_PUBLIC_KEY_SHA}" ]]; then
+  echo "Signing key mismatch between ${KEY_HOST_PATH} and ${PUBLIC_CONTRACT_PATH}" >&2
+  echo "Host public key sha256: ${HOST_PUBLIC_KEY_SHA}" >&2
+  echo "Repo contract sha256: ${CONTRACT_PUBLIC_KEY_SHA}" >&2
   exit 1
 fi
 
