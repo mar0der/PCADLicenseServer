@@ -72,6 +72,19 @@ require_env_file_key() {
   fi
 }
 
+upsert_env_file_key() {
+  local key="$1"
+  local value="$2"
+  local escaped_value
+  escaped_value="$(printf '%s' "${value}" | sed -e 's/[\/&]/\\&/g')"
+
+  if grep -Eq "^[[:space:]]*${key}=" "${SERVER_PATH}/${ENV_FILE}"; then
+    sed -i -E "s|^[[:space:]]*${key}=.*$|${key}=${escaped_value}|" "${SERVER_PATH}/${ENV_FILE}"
+  else
+    printf '\n%s=%s\n' "${key}" "${value}" >> "${SERVER_PATH}/${ENV_FILE}"
+  fi
+}
+
 reject_placeholder_env_file_key() {
   local key="$1"
   local value
@@ -82,6 +95,36 @@ reject_placeholder_env_file_key() {
       exit 1
       ;;
   esac
+}
+
+read_github_event_input() {
+  local key="$1"
+
+  if [[ -z "${GITHUB_EVENT_PATH:-}" || ! -f "${GITHUB_EVENT_PATH}" ]]; then
+    return 0
+  fi
+
+  if ! command -v node >/dev/null 2>&1; then
+    return 0
+  fi
+
+  GITHUB_EVENT_INPUT_KEY="${key}" node <<'EOF'
+const fs = require("fs");
+
+const eventPath = process.env.GITHUB_EVENT_PATH;
+const inputKey = process.env.GITHUB_EVENT_INPUT_KEY;
+
+if (!eventPath || !inputKey) {
+  process.exit(0);
+}
+
+const event = JSON.parse(fs.readFileSync(eventPath, "utf8"));
+const value = event?.inputs?.[inputKey];
+
+if (typeof value === "string") {
+  process.stdout.write(value);
+}
+EOF
 }
 
 rotate_keep_latest() {
@@ -110,6 +153,12 @@ run_container_smoke_check() {
       });
     ' "${path}"
 }
+
+PLUGIN_SECRET_OVERRIDE="$(read_github_event_input plugin_secret_override)"
+if [[ -n "${PLUGIN_SECRET_OVERRIDE}" ]]; then
+  upsert_env_file_key PLUGIN_SECRET "${PLUGIN_SECRET_OVERRIDE}"
+  echo "Applied PLUGIN_SECRET override from workflow dispatch input"
+fi
 
 echo "Validating deploy environment file"
 require_env_file_key DATABASE_URL
