@@ -143,6 +143,72 @@ test("icon asset upsert updates the existing asset without duplicating rows", as
   });
 });
 
+test("plugin catalog sync keeps server-authored command metadata once the admin locks it", async () => {
+  await withTestPrisma(async (prisma) => {
+    const pluginSlug = `metadata-${randomUUID()}`;
+
+    await syncPluginCatalog(prisma, {
+      pluginSlug,
+      commands: [
+        {
+          commandKey: "DF.GENERATE_BEAM",
+          displayName: "Generate Beam",
+          manifestTitle: "Generate Beam",
+          description: "Plugin default tooltip",
+          stage: CommandStage.RELEASED,
+        },
+      ],
+      iconAssets: [],
+    });
+
+    await prisma.command.update({
+      where: {
+        pluginSlug_commandKey: {
+          pluginSlug,
+          commandKey: "DF.GENERATE_BEAM",
+        },
+      },
+      data: {
+        displayName: "Beam Generator",
+        displayNameLocked: true,
+        manifestTitle: "Beam Gen",
+        manifestTitleLocked: true,
+        description: "Server-authored tooltip",
+        descriptionLocked: true,
+        descriptiveName: "Beam Generator",
+      },
+    });
+
+    await syncPluginCatalog(prisma, {
+      pluginSlug,
+      commands: [
+        {
+          commandKey: "DF.GENERATE_BEAM",
+          displayName: "Plugin Generate Beam",
+          manifestTitle: "Plugin Beam",
+          description: "Plugin updated tooltip",
+          stage: CommandStage.RELEASED,
+        },
+      ],
+      iconAssets: [],
+    });
+
+    const command = await prisma.command.findUniqueOrThrow({
+      where: {
+        pluginSlug_commandKey: {
+          pluginSlug,
+          commandKey: "DF.GENERATE_BEAM",
+        },
+      },
+    });
+
+    assert.equal(command.displayName, "Beam Generator");
+    assert.equal(command.manifestTitle, "Beam Gen");
+    assert.equal(command.description, "Server-authored tooltip");
+    assert.equal(command.descriptiveName, "Beam Generator");
+  });
+});
+
 test("usage batch endpoint dedupes by eventId and stays retry-safe", async () => {
   await withTestPrisma(async (prisma) => {
     const pluginSlug = `usage-${randomUUID()}`;

@@ -170,35 +170,27 @@ test("readiness reports database failures without leaking internals", async () =
 
 test("validateServerRuntimeEnv rejects unreadable signing key paths", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcad-runtime-"));
-  const privateKeyPath = path.join(tempDir, "access-snapshot.private.pem");
-  fs.writeFileSync(privateKeyPath, createTestPrivateKeyPem());
-  fs.chmodSync(privateKeyPath, 0o000);
+  const report = validateServerRuntimeEnv(
+    {
+      NODE_ENV: "production",
+      DATABASE_URL: "file:/app/data/dev.db",
+      NEXTAUTH_URL: "https://pcad.example.com",
+      NEXTAUTH_SECRET: "super-secret-nextauth-value",
+      PLUGIN_SECRET: "super-secret-plugin-value",
+      ADMIN_USERNAME: "pcad-admin",
+      ADMIN_PASSWORD: "super-secret-admin-password",
+      ACCESS_SNAPSHOT_PRIVATE_KEY_PATH: tempDir,
+    },
+    {
+      cwd: tempDir,
+    }
+  );
 
-  try {
-    const report = validateServerRuntimeEnv(
-      {
-        NODE_ENV: "production",
-        DATABASE_URL: "file:/app/data/dev.db",
-        NEXTAUTH_URL: "https://pcad.example.com",
-        NEXTAUTH_SECRET: "super-secret-nextauth-value",
-        PLUGIN_SECRET: "super-secret-plugin-value",
-        ADMIN_USERNAME: "pcad-admin",
-        ADMIN_PASSWORD: "super-secret-admin-password",
-        ACCESS_SNAPSHOT_PRIVATE_KEY_PATH: privateKeyPath,
-      },
-      {
-        cwd: tempDir,
-      }
-    );
-
-    assert.equal(report.isValidForStartup, false);
-    assert.equal(
-      report.issues.some((issue) => issue.code === "ACCESS_SNAPSHOT_PRIVATE_KEY_PATH_UNREADABLE"),
-      true
-    );
-  } finally {
-    fs.chmodSync(privateKeyPath, 0o600);
-  }
+  assert.equal(report.isValidForStartup, false);
+  assert.equal(
+    report.issues.some((issue) => issue.code === "ACCESS_SNAPSHOT_PRIVATE_KEY_PATH_UNREADABLE"),
+    true
+  );
 });
 
 test("validateServerRuntimeEnv rejects invalid private key PEM input", () => {

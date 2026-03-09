@@ -14,6 +14,7 @@ export type CommandUsageAggregate = {
   commandKey: string;
   displayName: string;
   manifestTitle: string;
+  description: string | null;
   iconKey: string | null;
   iconDataUri: string | null;
   iconContentType: string | null;
@@ -50,6 +51,9 @@ export type RibbonLayoutViewModel = {
 
 export type RibbonLayoutItemViewModel = Omit<RibbonItemNode, "children"> & {
   resolvedTitle: string;
+  displayName: string | null;
+  shortLabel: string | null;
+  tooltip: string | null;
   iconDataUri: string | null;
   iconContentType: string | null;
   analytics: {
@@ -122,6 +126,7 @@ export async function getCommandUsageAggregates(
         commandKey,
         displayName: command?.displayName ?? commandKey,
         manifestTitle: command?.manifestTitle ?? command?.displayName ?? commandKey,
+        description: command?.description ?? null,
         iconKey,
         iconDataUri: icon?.iconDataUri ?? null,
         iconContentType: icon?.iconContentType ?? null,
@@ -217,6 +222,7 @@ function mapRibbonItemNode(
         commandKey: itemNode.commandKey,
         displayName: itemNode.commandKey,
         manifestTitle: itemNode.commandKey,
+        description: null,
         iconKey: itemNode.iconCommandKey ?? itemNode.commandKey,
         iconDataUri: null,
         iconContentType: null,
@@ -229,6 +235,9 @@ function mapRibbonItemNode(
   return {
     ...itemNode,
     resolvedTitle: itemNode.title ?? summary?.manifestTitle ?? itemNode.itemKey,
+    displayName: summary?.displayName ?? null,
+    shortLabel: summary?.manifestTitle ?? null,
+    tooltip: summary?.description ?? null,
     iconDataUri: summary?.iconDataUri ?? null,
     iconContentType: summary?.iconContentType ?? null,
     analytics: summary

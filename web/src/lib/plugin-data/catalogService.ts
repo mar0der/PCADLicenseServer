@@ -5,6 +5,7 @@ import {
 } from "@prisma/client";
 
 import { DEFAULT_PLUGIN_SLUG, accessLevelFromCommandStage } from "../access-control/compat";
+import { buildPluginSyncedCommandMetadataUpdate } from "../commands/metadata";
 import {
   bumpCapabilityCatalogVersion,
   getPluginConfigurationState,
@@ -130,10 +131,13 @@ async function upsertCommand(
         pluginSlug,
         commandKey,
         displayName,
+        displayNameLocked: false,
         manifestTitle,
+        manifestTitleLocked: false,
         iconCommandKey,
         category,
         description,
+        descriptionLocked: false,
         stage: defaultStage,
         uniqueName: buildLegacyCompatibleUniqueName(pluginSlug, commandKey),
         descriptiveName: displayName,
@@ -144,22 +148,25 @@ async function upsertCommand(
     return true;
   }
 
-  const updateData = {
+  const metadataUpdate = buildPluginSyncedCommandMetadataUpdate(existingCommand, {
     displayName,
     manifestTitle,
+    description,
+  });
+  const updateData = {
+    displayName: metadataUpdate.data.displayName,
+    manifestTitle: metadataUpdate.data.manifestTitle,
     iconCommandKey,
     category,
-    description,
+    description: metadataUpdate.data.description,
     uniqueName: buildLegacyCompatibleUniqueName(pluginSlug, commandKey),
-    descriptiveName: displayName,
+    descriptiveName: metadataUpdate.data.descriptiveName,
   };
 
   if (
-    existingCommand.displayName === updateData.displayName &&
-    existingCommand.manifestTitle === updateData.manifestTitle &&
+    !metadataUpdate.changed &&
     existingCommand.iconCommandKey === updateData.iconCommandKey &&
     existingCommand.category === updateData.category &&
-    existingCommand.description === updateData.description &&
     existingCommand.uniqueName === updateData.uniqueName &&
     existingCommand.descriptiveName === updateData.descriptiveName
   ) {

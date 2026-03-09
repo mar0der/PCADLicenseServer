@@ -8,13 +8,14 @@ import {
   commandStageFromAccessLevel,
   DEFAULT_PLUGIN_SLUG,
 } from "@/lib/access-control/compat";
-
-type CommandUpdatePayload = {
-  descriptiveName?: string;
-  displayName?: string;
-  requiredAccessLevel?: number;
-  stage?: CommandStage;
-};
+import {
+  buildAdminCommandMetadataUpdate,
+  validateAdminCommandMetadataUpdate,
+} from "@/lib/commands/metadata";
+import {
+  bumpCapabilityCatalogVersion,
+  getPluginConfigurationState,
+} from "@/lib/plugin-configuration/state";
 
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions);
@@ -63,7 +64,11 @@ export async function POST(req: Request) {
         pluginSlug: pluginSlug ?? DEFAULT_PLUGIN_SLUG,
         commandKey: uniqueName.trim(),
         displayName: descriptiveName.trim(),
+        displayNameLocked: true,
+        manifestTitle: descriptiveName.trim(),
+        manifestTitleLocked: true,
         stage: resolvedStage,
+        descriptionLocked: false,
         uniqueName: uniqueName.trim(),
         descriptiveName: descriptiveName.trim(),
         requiredAccessLevel: requiredAccessLevel ?? accessLevelFromCommandStage(resolvedStage),
@@ -84,39 +89,80 @@ export async function PUT(req: Request) {
   }
 
   try {
-    const { id, descriptiveName, requiredAccessLevel, stage } = (await req.json()) as {
+    const payload = (await req.json()) as {
       id?: string;
+      displayName?: string;
       descriptiveName?: string;
+      manifestTitle?: string | null;
+      description?: string | null;
       requiredAccessLevel?: number;
       stage?: CommandStage;
+      commandKey?: string | null;
+      uniqueName?: string | null;
+      pluginSlug?: string | null;
     };
+    const { id, requiredAccessLevel } = payload;
 
     if (!id) {
       return new NextResponse("Bad Request", { status: 400 });
     }
 
-    const dataToUpdate: CommandUpdatePayload = {};
-    if (descriptiveName) {
-      const trimmedName = descriptiveName.trim();
-      dataToUpdate.descriptiveName = trimmedName;
-      dataToUpdate.displayName = trimmedName;
-    }
-
-    const resolvedStage = stage ?? (requiredAccessLevel !== undefined ? commandStageFromAccessLevel(requiredAccessLevel) : undefined);
-    if (resolvedStage) {
-      dataToUpdate.stage = resolvedStage;
-      dataToUpdate.requiredAccessLevel = requiredAccessLevel ?? accessLevelFromCommandStage(resolvedStage);
-    } else if (requiredAccessLevel !== undefined) {
-      dataToUpdate.requiredAccessLevel = requiredAccessLevel;
-    }
-
-    const command = await prisma.command.update({
-      where: { id },
-      data: dataToUpdate,
+    const validationResult = validateAdminCommandMetadataUpdate({
+      displayName: payload.displayName ?? payload.descriptiveName,
+      manifestTitle: payload.manifestTitle,
+      description: payload.description,
+      stage: payload.stage ?? (requiredAccessLevel !== undefined ? commandStageFromAccessLevel(requiredAccessLevel) : undefined),
+      commandKey: payload.commandKey,
+      uniqueName: payload.uniqueName,
+      pluginSlug: payload.pluginSlug,
     });
 
-    return NextResponse.json(command, { status: 200 });
+    if (!validationResult.ok) {
+      return NextResponse.json({ message: validationResult.errors.join(" ") }, { status: 400 });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const existingCommand = await tx.command.findUnique({
+        where: { id },
+      });
+
+      if (!existingCommand) {
+        throw new Error("COMMAND_NOT_FOUND");
+      }
+
+      const adminUpdate = buildAdminCommandMetadataUpdate(
+        existingCommand,
+        validationResult.value
+      );
+
+      if (!adminUpdate.changed) {
+        const versions = await getPluginConfigurationState(tx, existingCommand.pluginSlug);
+        return {
+          command: existingCommand,
+          changed: false,
+          versions,
+        };
+      }
+
+      const command = await tx.command.update({
+        where: { id },
+        data: adminUpdate.data,
+      });
+      const versions = await bumpCapabilityCatalogVersion(tx, existingCommand.pluginSlug);
+
+      return {
+        command,
+        changed: true,
+        versions,
+      };
+    });
+
+    return NextResponse.json(result, { status: 200 });
   } catch (error) {
+    if (error instanceof Error && error.message === "COMMAND_NOT_FOUND") {
+      return new NextResponse("Command not found", { status: 404 });
+    }
+
     console.error("Error updating command:", error);
     return new NextResponse("Internal server error", { status: 500 });
   }

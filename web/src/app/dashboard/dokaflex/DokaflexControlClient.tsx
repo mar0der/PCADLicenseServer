@@ -7,7 +7,9 @@ import type { Command, CommandStage } from "@prisma/client";
 import {
   addPushButtonToPanel,
   addRibbonPanel,
+  buildCommandMetadataForm,
   buildLocalTestingStatusModel,
+  buildRibbonItemCommandPresentation,
   buildRibbonCommandCatalogRows,
   countRibbonLayoutInventory,
   moveRibbonItemToPanel,
@@ -17,6 +19,8 @@ import {
   removeRibbonPanel,
   renameRibbonPanel,
   renameRibbonTab,
+  validateCommandMetadataForm,
+  type CommandMetadataFormInput,
   type RibbonCommandCatalogEntry,
 } from "@/lib/dashboard/dokaflexAdmin";
 import type {
@@ -60,9 +64,18 @@ export default function DokaflexControlClient({
   const [moveTargets, setMoveTargets] = useState<Record<string, string>>({});
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingCommandMetadata, setIsSavingCommandMetadata] = useState(false);
   const [isReloading, setIsReloading] = useState(false);
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [isSeedingLayout, setIsSeedingLayout] = useState(false);
+  const [selectedCommandKey, setSelectedCommandKey] = useState<string>(
+    () => initialCatalogEntries[0]?.commandKey ?? ""
+  );
+  const [commandMetadataForm, setCommandMetadataForm] = useState<CommandMetadataFormInput>(() =>
+    initialCatalogEntries[0]
+      ? buildCommandMetadataForm(initialCatalogEntries[0])
+      : createEmptyCommandMetadataForm()
+  );
 
   useEffect(() => {
     const nextLayout = toEditableLayout(initialLayout);
@@ -72,6 +85,13 @@ export default function DokaflexControlClient({
     setSavedLayoutSignature(createLayoutSignature(nextLayout));
     setTabTitleDrafts(buildTabTitleDrafts(nextLayout));
     setPanelTitleDrafts(buildPanelTitleDrafts(nextLayout));
+    const nextSelectedCommandKey = initialCatalogEntries[0]?.commandKey ?? "";
+    setSelectedCommandKey(nextSelectedCommandKey);
+    setCommandMetadataForm(
+      initialCatalogEntries[0]
+        ? buildCommandMetadataForm(initialCatalogEntries[0])
+        : createEmptyCommandMetadataForm()
+    );
     setFeedback(null);
   }, [initialCatalogEntries, initialLayout]);
 
@@ -101,7 +121,26 @@ export default function DokaflexControlClient({
     () => new Map(catalogEntries.map((entry) => [entry.commandKey, entry])),
     [catalogEntries]
   );
+  const selectedCatalogEntry = useMemo(
+    () => (selectedCommandKey ? catalogEntryByCommandKey.get(selectedCommandKey) ?? null : null),
+    [catalogEntryByCommandKey, selectedCommandKey]
+  );
   const hasUnsavedChanges = createLayoutSignature(layout) !== savedLayoutSignature;
+
+  useEffect(() => {
+    if (selectedCatalogEntry) {
+      setCommandMetadataForm(buildCommandMetadataForm(selectedCatalogEntry));
+      return;
+    }
+
+    if (catalogEntries[0]) {
+      setSelectedCommandKey(catalogEntries[0].commandKey);
+      setCommandMetadataForm(buildCommandMetadataForm(catalogEntries[0]));
+      return;
+    }
+
+    setCommandMetadataForm(createEmptyCommandMetadataForm());
+  }, [catalogEntries, selectedCatalogEntry]);
 
   async function handleBootstrapDokaflex() {
     setIsBootstrapping(true);
@@ -236,6 +275,70 @@ export default function DokaflexControlClient({
       });
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function handleSaveCommandMetadata() {
+    if (!selectedCatalogEntry) {
+      setFeedback({
+        tone: "error",
+        message: "Select a Dokaflex command before editing its display metadata.",
+      });
+      return;
+    }
+
+    const validation = validateCommandMetadataForm(commandMetadataForm);
+    if (!validation.ok) {
+      setFeedback({
+        tone: "error",
+        message: validation.errors.join(" "),
+      });
+      return;
+    }
+
+    setIsSavingCommandMetadata(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch("/api/admin/commands", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: selectedCatalogEntry.id,
+          displayName: validation.value.displayName,
+          manifestTitle: validation.value.manifestTitle,
+          description: validation.value.description,
+          stage: validation.value.stage,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorMessage = await readErrorMessage(
+          response,
+          `Failed to update display metadata for ${selectedCatalogEntry.commandKey}.`
+        );
+        setFeedback({
+          tone: "error",
+          message: errorMessage,
+        });
+        return;
+      }
+
+      const payload = (await response.json()) as { changed: boolean };
+
+      await refreshDokaflexState({
+        successMessage: payload.changed
+          ? `Saved display metadata for ${selectedCatalogEntry.commandKey}. Dokaflex will now show "${validation.value.displayName}" after the next config refresh.`
+          : `No display metadata changes were needed for ${selectedCatalogEntry.commandKey}.`,
+      });
+    } catch (error) {
+      console.error("Failed to save Dokaflex command metadata", error);
+      setFeedback({
+        tone: "error",
+        message: `Failed to update display metadata for ${selectedCatalogEntry.commandKey}. Check server logs and try again.`,
+      });
+    } finally {
+      setIsSavingCommandMetadata(false);
     }
   }
 
@@ -721,6 +824,163 @@ export default function DokaflexControlClient({
           </span>
         </div>
 
+        <div className="mt-6 rounded-xl border border-neutral-700 bg-neutral-900/60 p-5">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-neutral-400">
+                Command Metadata Editor
+              </h3>
+              <p className="mt-2 max-w-3xl text-sm text-neutral-400">
+                Edit human-facing Dokaflex command labels here without changing the stable
+                integration key the plugin uses. The read-only <span className="font-mono text-xs text-neutral-300">commandKey</span> remains the immutable identity.
+              </p>
+            </div>
+            {selectedCatalogEntry ? (
+              <span className="inline-flex rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-200">
+                Editing {selectedCatalogEntry.commandKey}
+              </span>
+            ) : null}
+          </div>
+
+          {selectedCatalogEntry ? (
+            <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="text-sm text-neutral-300">
+                  <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Immutable Command Key
+                  </span>
+                  <input
+                    type="text"
+                    value={selectedCatalogEntry.commandKey}
+                    readOnly
+                    className="h-11 w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 font-mono text-sm text-neutral-300 focus:outline-none"
+                  />
+                </label>
+
+                <label className="text-sm text-neutral-300">
+                  <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Stage
+                  </span>
+                  <select
+                    value={commandMetadataForm.stage}
+                    onChange={(event) =>
+                      setCommandMetadataForm((currentForm) => ({
+                        ...currentForm,
+                        stage: event.target.value,
+                      }))
+                    }
+                    className="h-11 w-full rounded-md border border-neutral-600 bg-neutral-900 px-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="RELEASED">RELEASED</option>
+                    <option value="TESTING">TESTING</option>
+                    <option value="DEVELOPMENT">DEVELOPMENT</option>
+                    <option value="DISABLED">DISABLED</option>
+                  </select>
+                </label>
+
+                <label className="text-sm text-neutral-300 md:col-span-2">
+                  <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Display Name
+                  </span>
+                  <input
+                    type="text"
+                    value={commandMetadataForm.displayName}
+                    onChange={(event) =>
+                      setCommandMetadataForm((currentForm) => ({
+                        ...currentForm,
+                        displayName: event.target.value,
+                      }))
+                    }
+                    className="h-11 w-full rounded-md border border-neutral-600 bg-neutral-900 px-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+
+                <label className="text-sm text-neutral-300">
+                  <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Ribbon Short Label
+                  </span>
+                  <input
+                    type="text"
+                    value={commandMetadataForm.shortLabel}
+                    onChange={(event) =>
+                      setCommandMetadataForm((currentForm) => ({
+                        ...currentForm,
+                        shortLabel: event.target.value,
+                      }))
+                    }
+                    className="h-11 w-full rounded-md border border-neutral-600 bg-neutral-900 px-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+
+                <label className="text-sm text-neutral-300 md:col-span-2">
+                  <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Tooltip / Description
+                  </span>
+                  <textarea
+                    value={commandMetadataForm.tooltip}
+                    onChange={(event) =>
+                      setCommandMetadataForm((currentForm) => ({
+                        ...currentForm,
+                        tooltip: event.target.value,
+                      }))
+                    }
+                    rows={4}
+                    className="w-full rounded-md border border-neutral-600 bg-neutral-900 px-3 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </label>
+              </div>
+
+              <div className="rounded-xl border border-neutral-700 bg-neutral-800/80 p-4">
+                <h4 className="text-sm font-semibold text-white">Command Preview</h4>
+                <p className="mt-2 text-sm text-neutral-300">{commandMetadataForm.displayName || selectedCatalogEntry.commandKey}</p>
+                <p className="mt-1 font-mono text-xs text-neutral-500">{selectedCatalogEntry.commandKey}</p>
+                {commandMetadataForm.shortLabel.trim() &&
+                commandMetadataForm.shortLabel.trim() !== commandMetadataForm.displayName.trim() ? (
+                  <p className="mt-3 text-xs text-neutral-400">
+                    Ribbon label:
+                    <span className="ml-1 text-neutral-200">{commandMetadataForm.shortLabel.trim()}</span>
+                  </p>
+                ) : null}
+                {commandMetadataForm.tooltip.trim() ? (
+                  <p className="mt-3 text-xs leading-5 text-neutral-500">
+                    {commandMetadataForm.tooltip.trim()}
+                  </p>
+                ) : null}
+                <div className="mt-4 flex flex-wrap gap-2 text-xs text-neutral-400">
+                  <span className="inline-flex rounded-full bg-neutral-700 px-3 py-1">
+                    Current stage: {commandMetadataForm.stage}
+                  </span>
+                  <span className="inline-flex rounded-full bg-neutral-700 px-3 py-1">
+                    Layout placements: {catalogRows.find((row) => row.commandKey === selectedCatalogEntry.commandKey)?.placementCount ?? 0}
+                  </span>
+                </div>
+                <div className="mt-5 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCommandMetadataForm(buildCommandMetadataForm(selectedCatalogEntry))}
+                    className="inline-flex h-10 flex-1 items-center justify-center rounded-md border border-neutral-600 bg-neutral-900 px-4 text-sm font-medium text-white transition-colors hover:border-neutral-500"
+                  >
+                    Reset Form
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveCommandMetadata()}
+                    disabled={isSavingCommandMetadata}
+                    className="inline-flex h-10 flex-1 items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {isSavingCommandMetadata ? "Saving..." : "Save Metadata"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-4 text-sm text-neutral-500">
+              No Dokaflex commands are registered yet. Bootstrap Dokaflex first, then edit
+              command labels here.
+            </p>
+          )}
+        </div>
+
         <div className="mt-6 overflow-hidden rounded-xl border border-neutral-700">
           <table className="w-full text-left text-sm">
             <thead className="bg-neutral-900/70 text-xs uppercase tracking-wide text-neutral-400">
@@ -729,11 +989,17 @@ export default function DokaflexControlClient({
                 <th className="px-4 py-3 font-medium">Stage</th>
                 <th className="px-4 py-3 font-medium">Usage</th>
                 <th className="px-4 py-3 font-medium">Layout Placement</th>
+                <th className="px-4 py-3 font-medium">Metadata</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-700 bg-neutral-800">
               {catalogRows.map((row) => (
-                <tr key={row.commandKey} className="align-top">
+                <tr
+                  key={row.commandKey}
+                  className={`align-top ${
+                    row.commandKey === selectedCommandKey ? "bg-blue-500/5" : ""
+                  }`}
+                >
                   <td className="px-4 py-4">
                     <div className="flex items-start gap-3">
                       <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900">
@@ -750,8 +1016,16 @@ export default function DokaflexControlClient({
                         )}
                       </div>
                       <div className="min-w-0">
-                        <p className="font-medium text-white">{row.title}</p>
+                        <p className="font-medium text-white">{row.displayName}</p>
                         <p className="font-mono text-xs text-neutral-500">{row.commandKey}</p>
+                        {row.shortLabel && row.shortLabel !== row.displayName ? (
+                          <p className="mt-1 text-xs text-neutral-400">
+                            Ribbon label: <span className="text-neutral-200">{row.shortLabel}</span>
+                          </p>
+                        ) : null}
+                        {row.tooltip ? (
+                          <p className="mt-2 max-w-xl text-xs text-neutral-500">{row.tooltip}</p>
+                        ) : null}
                       </div>
                     </div>
                   </td>
@@ -777,6 +1051,19 @@ export default function DokaflexControlClient({
                         ))}
                       </div>
                     )}
+                  </td>
+                  <td className="px-4 py-4">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCommandKey(row.commandKey)}
+                      className={`inline-flex h-10 items-center justify-center rounded-md px-4 text-sm font-medium transition-colors ${
+                        row.commandKey === selectedCommandKey
+                          ? "bg-blue-600 text-white hover:bg-blue-700"
+                          : "border border-neutral-600 bg-neutral-900 text-white hover:border-neutral-500"
+                      }`}
+                    >
+                      {row.commandKey === selectedCommandKey ? "Editing" : "Edit Metadata"}
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -881,6 +1168,9 @@ function RibbonItemCard({
   disableMoveDown: boolean;
 }) {
   const supportsInlineEditing = item.kind === "push_button" && (item.children?.length ?? 0) === 0;
+  const commandPresentation = command
+    ? buildRibbonItemCommandPresentation(command)
+    : null;
 
   return (
     <article className="rounded-xl border border-neutral-700 bg-neutral-900/70 p-4">
@@ -891,7 +1181,7 @@ function RibbonItemCard({
               {command?.iconDataUri ? (
                 <img
                   src={command.iconDataUri}
-                  alt={command.manifestTitle ?? command.displayName}
+                  alt={commandPresentation?.title ?? item.itemKey}
                   className="h-10 w-10 object-contain"
                 />
               ) : (
@@ -901,7 +1191,7 @@ function RibbonItemCard({
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="font-medium text-white">
-                  {item.title ?? command?.manifestTitle ?? command?.displayName ?? item.itemKey}
+                  {item.title ?? commandPresentation?.title ?? item.itemKey}
                 </p>
                 <span className="inline-flex rounded-full bg-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300">
                   {item.kind}
@@ -909,6 +1199,14 @@ function RibbonItemCard({
                 {command ? <StageBadge stage={command.stage} /> : null}
               </div>
               <p className="mt-1 font-mono text-xs text-neutral-500">{item.commandKey ?? item.itemKey}</p>
+              {commandPresentation && commandPresentation.displayName !== (item.title ?? commandPresentation.title) ? (
+                <p className="mt-1 text-xs text-neutral-400">
+                  Display name: <span className="text-neutral-200">{commandPresentation.displayName}</span>
+                </p>
+              ) : null}
+              {commandPresentation?.tooltip ? (
+                <p className="mt-2 text-xs leading-5 text-neutral-500">{commandPresentation.tooltip}</p>
+              ) : null}
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-neutral-400">
                 <span className="inline-flex rounded-full bg-neutral-800 px-2 py-1">
                   {command?.totalUses ?? 0} total use(s)
@@ -1072,9 +1370,11 @@ function mapCommandsIntoCatalogEntries(
   return commands.map((command) => {
     const currentEntry = currentEntryByCommandKey.get(command.commandKey);
     return {
+      id: command.id,
       commandKey: command.commandKey,
       displayName: command.displayName,
       manifestTitle: command.manifestTitle,
+      description: command.description,
       stage: command.stage,
       iconDataUri: currentEntry?.iconDataUri ?? null,
       totalUses: currentEntry?.totalUses ?? 0,
@@ -1096,4 +1396,13 @@ async function readErrorMessage(response: Response, fallbackMessage: string): Pr
       return fallbackMessage;
     }
   }
+}
+
+function createEmptyCommandMetadataForm(): CommandMetadataFormInput {
+  return {
+    displayName: "",
+    shortLabel: "",
+    tooltip: "",
+    stage: "RELEASED",
+  };
 }

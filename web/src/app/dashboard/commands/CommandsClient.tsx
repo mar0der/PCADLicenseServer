@@ -3,7 +3,11 @@ import Link from "next/link";
 import type { CommandStage } from "@prisma/client";
 
 type CommandCatalogRow = {
+  id: string;
   commandKey: string;
+  displayName: string;
+  shortLabel: string | null;
+  tooltip: string | null;
   title: string;
   stage: CommandStage;
   iconDataUri: string | null;
@@ -87,8 +91,16 @@ export default function CommandsClient({
                         )}
                       </div>
                       <div className="min-w-0">
-                        <p className="font-medium text-white">{row.title}</p>
+                        <p className="font-medium text-white">{row.displayName}</p>
                         <p className="font-mono text-xs text-neutral-500">{row.commandKey}</p>
+                        {row.shortLabel && row.shortLabel !== row.displayName ? (
+                          <p className="mt-1 text-xs text-neutral-400">
+                            Ribbon label: <span className="text-neutral-200">{row.shortLabel}</span>
+                          </p>
+                        ) : null}
+                        {row.tooltip ? (
+                          <p className="mt-2 max-w-xl text-xs text-neutral-500">{row.tooltip}</p>
+                        ) : null}
                       </div>
                     </div>
                   </td>

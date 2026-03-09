@@ -6,10 +6,12 @@ import { BaseRole } from "@prisma/client";
 import {
   addPushButtonToPanel,
   addRibbonPanel,
+  buildCommandMetadataForm,
   buildDokaflexUserSurfaceSummary,
   buildLocalTestingStatusModel,
   buildPreviewDisplayRows,
   buildRibbonCommandCatalogRows,
+  buildRibbonItemCommandPresentation,
   countRibbonLayoutInventory,
   moveRibbonItemToPanel,
   moveRibbonItemWithinPanel,
@@ -17,6 +19,7 @@ import {
   removeRibbonPanel,
   renameRibbonPanel,
   renameRibbonTab,
+  validateCommandMetadataForm,
   validateOverrideDeleteId,
   validateOverrideForm,
 } from "../src/lib/dashboard/dokaflexAdmin";
@@ -74,6 +77,66 @@ test("validateOverrideDeleteId fails closed for blank ids", () => {
   assert.equal(validateOverrideDeleteId(""), "Override id is required.");
   assert.equal(validateOverrideDeleteId("   "), "Override id is required.");
   assert.equal(validateOverrideDeleteId("override-123"), null);
+});
+
+test("buildCommandMetadataForm mirrors the current server-authored command metadata", () => {
+  const form = buildCommandMetadataForm({
+    id: "command-1",
+    commandKey: "DF.GENERATE_BEAM",
+    displayName: "Beam Generator",
+    manifestTitle: "Beam Gen",
+    description: "Server-authored tooltip",
+    stage: "TESTING",
+    iconDataUri: null,
+    totalUses: 0,
+    uniqueUsers: 0,
+    lastUsedAtUtc: null,
+  });
+
+  assert.deepEqual(form, {
+    displayName: "Beam Generator",
+    shortLabel: "Beam Gen",
+    tooltip: "Server-authored tooltip",
+    stage: "TESTING",
+  });
+});
+
+test("validateCommandMetadataForm trims editable labels and rejects invalid stage values", () => {
+  const validResult = validateCommandMetadataForm({
+    displayName: "  Beam Generator  ",
+    shortLabel: "  Beam Gen  ",
+    tooltip: "  Server-authored tooltip  ",
+    stage: "DEVELOPMENT",
+  });
+
+  assert.equal(validResult.ok, true);
+  if (!validResult.ok) {
+    assert.fail("Expected metadata validation to succeed");
+  }
+
+  assert.deepEqual(validResult.value, {
+    displayName: "Beam Generator",
+    manifestTitle: "Beam Gen",
+    description: "Server-authored tooltip",
+    stage: "DEVELOPMENT",
+  });
+
+  const invalidResult = validateCommandMetadataForm({
+    displayName: "   ",
+    shortLabel: "",
+    tooltip: "",
+    stage: "ALPHA",
+  });
+
+  assert.equal(invalidResult.ok, false);
+  if (invalidResult.ok) {
+    assert.fail("Expected metadata validation to fail");
+  }
+
+  assert.deepEqual(invalidResult.errors, [
+    "Display name is required.",
+    "Stage must be RELEASED, TESTING, DEVELOPMENT, or DISABLED.",
+  ]);
 });
 
 test("buildPreviewDisplayRows maps preview rows into operator-facing basis labels", () => {
@@ -305,9 +368,11 @@ test("buildRibbonCommandCatalogRows reframes Dokaflex commands around stage, usa
     layout: createDokaflexLayout(),
     commands: [
       {
+        id: "command-2",
         commandKey: "DF.PARAMETER_EDITOR",
         displayName: "Parameter Editor",
         manifestTitle: "Parameter Editor",
+        description: null,
         stage: "TESTING",
         iconDataUri: "data:image/png;base64,AAA",
         totalUses: 3,
@@ -315,9 +380,11 @@ test("buildRibbonCommandCatalogRows reframes Dokaflex commands around stage, usa
         lastUsedAtUtc: "2026-03-08T10:00:00Z",
       },
       {
+        id: "command-1",
         commandKey: "DF.GENERATE_BEAM",
-        displayName: "Generate Beam",
-        manifestTitle: "Generate Beam",
+        displayName: "Beam Generator",
+        manifestTitle: "Beam Gen",
+        description: "Server-authored tooltip",
         stage: "RELEASED",
         iconDataUri: null,
         totalUses: 12,
@@ -329,8 +396,12 @@ test("buildRibbonCommandCatalogRows reframes Dokaflex commands around stage, usa
 
   assert.deepEqual(rows, [
     {
+      id: "command-1",
       commandKey: "DF.GENERATE_BEAM",
-      title: "Generate Beam",
+      displayName: "Beam Generator",
+      shortLabel: "Beam Gen",
+      tooltip: "Server-authored tooltip",
+      title: "Beam Gen",
       stage: "RELEASED",
       iconDataUri: null,
       totalUses: 12,
@@ -340,7 +411,11 @@ test("buildRibbonCommandCatalogRows reframes Dokaflex commands around stage, usa
       placementCount: 1,
     },
     {
+      id: "command-2",
       commandKey: "DF.PARAMETER_EDITOR",
+      displayName: "Parameter Editor",
+      shortLabel: "Parameter Editor",
+      tooltip: null,
       title: "Parameter Editor",
       stage: "TESTING",
       iconDataUri: "data:image/png;base64,AAA",
@@ -351,6 +426,22 @@ test("buildRibbonCommandCatalogRows reframes Dokaflex commands around stage, usa
       placementCount: 0,
     },
   ]);
+});
+
+test("buildRibbonItemCommandPresentation keeps immutable command identity separate from display metadata", () => {
+  assert.deepEqual(
+    buildRibbonItemCommandPresentation({
+      displayName: "Beam Generator",
+      manifestTitle: "Beam Gen",
+      description: "Server-authored tooltip",
+    }),
+    {
+      displayName: "Beam Generator",
+      shortLabel: "Beam Gen",
+      tooltip: "Server-authored tooltip",
+      title: "Beam Gen",
+    }
+  );
 });
 
 function createDokaflexLayout(): RibbonLayoutDocumentInput {

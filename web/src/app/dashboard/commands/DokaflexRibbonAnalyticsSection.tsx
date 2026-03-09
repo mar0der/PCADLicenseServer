@@ -93,6 +93,14 @@ function RibbonItemCard({
             <span>{item.itemKey}</span>
             {item.commandKey ? <span>Command: {item.commandKey}</span> : null}
           </div>
+          {item.displayName && item.displayName !== item.resolvedTitle ? (
+            <p className="mt-2 text-xs text-neutral-400">
+              Display name: <span className="text-neutral-200">{item.displayName}</span>
+            </p>
+          ) : null}
+          {item.tooltip ? (
+            <p className="mt-2 text-xs leading-5 text-neutral-500">{item.tooltip}</p>
+          ) : null}
 
           {item.analytics ? (
             <div className="mt-3 flex flex-wrap gap-2 text-xs">

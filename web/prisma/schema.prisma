@@ -88,12 +88,15 @@ model Command {
   pluginSlug          String                @default("dokaflex")
   commandKey          String
   displayName         String
+  displayNameLocked   Boolean               @default(false)
   manifestTitle       String?
+  manifestTitleLocked Boolean               @default(false)
   iconCommandKey      String?
   stage               CommandStage          @default(RELEASED)
   isActive            Boolean               @default(true)
   category            String?
   description         String?
+  descriptionLocked   Boolean               @default(false)
   createdAt           DateTime              @default(now())
   updatedAt           DateTime              @updatedAt
   uniqueName          String                @unique // Legacy compatibility field

@@ -23,9 +23,11 @@ export default async function DokaflexPage() {
   const catalogEntries = commands.map((command) => {
     const usage = usageByCommandKey.get(command.commandKey);
     return {
+      id: command.id,
       commandKey: command.commandKey,
       displayName: command.displayName,
       manifestTitle: command.manifestTitle,
+      description: command.description,
       stage: command.stage,
       iconDataUri: usage?.iconDataUri ?? null,
       totalUses: usage?.totalUses ?? 0,

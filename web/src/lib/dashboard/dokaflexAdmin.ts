@@ -8,6 +8,10 @@ import type {
   CommandAccessReason,
   ResolvedCommandAccess,
 } from "../access-control/resolveEffectiveAllowedCommandKeys";
+import {
+  resolveCommandPresentation,
+  type CommandPresentation,
+} from "../commands/metadata";
 import type {
   RibbonLayoutDocumentInput,
   RibbonLayoutItemInput,
@@ -31,6 +35,24 @@ export type ValidatedOverrideForm = {
 
 export type OverrideValidationResult =
   | { ok: true; value: ValidatedOverrideForm }
+  | { ok: false; errors: string[] };
+
+export type CommandMetadataFormInput = {
+  displayName: string;
+  shortLabel: string;
+  tooltip: string;
+  stage: string;
+};
+
+export type ValidatedCommandMetadataForm = {
+  displayName: string;
+  manifestTitle: string | null;
+  description: string | null;
+  stage: CommandStage;
+};
+
+export type CommandMetadataValidationResult =
+  | { ok: true; value: ValidatedCommandMetadataForm }
   | { ok: false; errors: string[] };
 
 export type PreviewDisplayRow = {
@@ -85,9 +107,11 @@ export type LayoutMutationResult =
   | { ok: false; error: string };
 
 export type RibbonCommandCatalogEntry = {
+  id: string;
   commandKey: string;
   displayName: string;
   manifestTitle: string | null;
+  description: string | null;
   stage: CommandStage;
   iconDataUri: string | null;
   totalUses: number;
@@ -96,7 +120,11 @@ export type RibbonCommandCatalogEntry = {
 };
 
 export type RibbonCommandCatalogRow = {
+  id: string;
   commandKey: string;
+  displayName: string;
+  shortLabel: string | null;
+  tooltip: string | null;
   title: string;
   stage: CommandStage;
   iconDataUri: string | null;
@@ -108,6 +136,12 @@ export type RibbonCommandCatalogRow = {
 };
 
 const OVERRIDE_EFFECTS = new Set<UserCommandOverrideEffect>(["GRANT", "DENY"]);
+const COMMAND_STAGES = new Set<CommandStage>([
+  "RELEASED",
+  "TESTING",
+  "DEVELOPMENT",
+  "DISABLED",
+]);
 
 export function validateOverrideForm(
   input: OverrideFormInput,
@@ -156,6 +190,46 @@ export function validateOverrideForm(
 
 export function validateOverrideDeleteId(overrideId: string): string | null {
   return overrideId.trim() ? null : "Override id is required.";
+}
+
+export function buildCommandMetadataForm(entry: RibbonCommandCatalogEntry): CommandMetadataFormInput {
+  return {
+    displayName: entry.displayName,
+    shortLabel: entry.manifestTitle ?? "",
+    tooltip: entry.description ?? "",
+    stage: entry.stage,
+  };
+}
+
+export function validateCommandMetadataForm(
+  input: CommandMetadataFormInput
+): CommandMetadataValidationResult {
+  const errors: string[] = [];
+  const displayName = input.displayName.trim();
+  const shortLabel = trimOptional(input.shortLabel);
+  const tooltip = trimOptional(input.tooltip);
+
+  if (!displayName) {
+    errors.push("Display name is required.");
+  }
+
+  if (!COMMAND_STAGES.has(input.stage as CommandStage)) {
+    errors.push("Stage must be RELEASED, TESTING, DEVELOPMENT, or DISABLED.");
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    value: {
+      displayName,
+      manifestTitle: shortLabel,
+      description: tooltip,
+      stage: input.stage as CommandStage,
+    },
+  };
 }
 
 export function buildPreviewDisplayRows(input: {
@@ -526,9 +600,14 @@ export function buildRibbonCommandCatalogRows(input: {
   return input.commands
     .map((command) => {
       const placements = placementsByCommandKey[command.commandKey] ?? [];
+      const presentation = resolveCommandPresentation(command);
       return {
+        id: command.id,
         commandKey: command.commandKey,
-        title: command.manifestTitle ?? command.displayName,
+        displayName: presentation.displayName,
+        shortLabel: presentation.shortLabel,
+        tooltip: presentation.tooltip,
+        title: presentation.title,
         stage: command.stage,
         iconDataUri: command.iconDataUri,
         totalUses: command.totalUses,
@@ -543,16 +622,24 @@ export function buildRibbonCommandCatalogRows(input: {
         return stageRank(left.stage) - stageRank(right.stage);
       }
 
-      if (left.title < right.title) {
+      if (left.displayName < right.displayName) {
         return -1;
       }
 
-      if (left.title > right.title) {
+      if (left.displayName > right.displayName) {
         return 1;
       }
 
       return 0;
     });
+}
+
+export function buildRibbonItemCommandPresentation(input: {
+  displayName: string;
+  manifestTitle: string | null;
+  description: string | null;
+}): CommandPresentation {
+  return resolveCommandPresentation(input);
 }
 
 export function countRibbonLayoutInventory(layout: RibbonLayoutDocumentInput): {
