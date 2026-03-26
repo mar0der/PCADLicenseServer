@@ -473,8 +473,7 @@ Goal:
 
 Rules:
 - keep current localhost base URL
-- do not break current `/api/auth/verify` immediately
-- add the new snapshot-based endpoint in parallel
+- add the snapshot-based endpoints in parallel
 
 ### Phase 2
 

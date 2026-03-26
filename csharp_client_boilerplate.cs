@@ -1,137 +1,142 @@
 using System;
-using System.IO;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 
-// NOTE: This file is a boilerplate example of what to include in your Revit Plugin's C# project.
-// You will need to install Newtonsoft.Json (or use System.Text.Json) for serialization.
-// In your IExternalApplication.OnStartup method, call: Task.Run(async () => await LicenseManager.VerifyAccessAsync()).Wait();
+// NOTE: This file is a transport-level example for the current snapshot-based plugin contract.
+// Real Dokaflex production code also verifies the RSA signature on the returned snapshot payload
+// before trusting any server-authored access or ribbon data.
 
 namespace YourRevitPlugin
 {
-    public static class LicenseManager
+    public static class PluginApiClient
     {
-        private static readonly HttpClient client = new HttpClient();
-        
-        // Configuration
-        private const string API_URL = "http://your-ubuntu-server-ip/api";
-        private const string PLUGIN_SECRET = "your-very-long-and-secure-random-string"; // Must match NEXT_AUTH process.env.PLUGIN_SECRET
-        
-        // Cache Configuration
-        private static string CacheFilePath => Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), 
-            "YourRevitPlugin", 
-            "license.cache"
-        );
+        private static readonly HttpClient Client = new HttpClient();
 
-        public static async Task<bool> VerifyAccessAsync(string revitVersion = "2024")
+        private const string API_URL = "https://pcad.petarpetkov.com/api";
+        private const string PLUGIN_SECRET = "your-plugin-secret-from-server-env";
+        private const string PLUGIN_SLUG = "dokaflex";
+
+        public static async Task<string> RefreshAccessSnapshotAsync(
+            string machineFingerprint,
+            string revitVersion = "2024",
+            string pluginVersion = "26.13.49")
         {
-            try
+            string jsonPayload = BuildIdentityPayload(machineFingerprint, revitVersion, pluginVersion);
+
+            using (var message = CreateSignedPost($"{API_URL}/plugin/access/refresh", jsonPayload))
+            using (HttpResponseMessage response = await Client.SendAsync(message).ConfigureAwait(false))
             {
-                // 1. Check Cache
-                if (IsCacheValid())
-                {
-                    return true;
-                }
+                string responseBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
 
-                // 2. Prepare Payload
-                var username = Environment.UserName;
-                var machineName = Environment.MachineName;
-                
-                string jsonPayload = $"{{\"username\":\"{username}\",\"machineName\":\"{machineName}\",\"revitVersion\":\"{revitVersion}\"}}";
-
-                // 3. Generate HMAC Signature
-                string signature = GenerateHmacSignature(jsonPayload, PLUGIN_SECRET);
-
-                // 4. Send Request
-                var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-                content.Headers.Add("X-Plugin-Signature", signature);
-
-                HttpResponseMessage response = await client.PostAsync($"{API_URL}/auth/verify", content);
-
-                if (response.IsSuccessStatusCode)
-                {
-                    // Access Granted: Save cache
-                    SaveCache();
-                    return true;
-                }
-                
-                // Access Denied
-                return false;
-            }
-            catch (Exception ex)
-            {
-                // Decide fail-open or fail-closed on network errors.
-                // Usually for internal tools, fail-open (return true) is better if the server is temporarily down,
-                // but strictly speaking, fail-closed (return false) is more secure.
-                System.Diagnostics.Debug.WriteLine($"Licensing Error: {ex.Message}");
-                return false;
+                // TODO: Verify the returned envelope signature against access-snapshot.public.pem.
+                return responseBody;
             }
         }
 
-        public static async Task LogUsageAsync(string functionName)
+        public static async Task<string> RefreshPluginConfigAsync(
+            string machineFingerprint,
+            string revitVersion = "2024",
+            string pluginVersion = "26.13.49")
         {
-            try
+            string jsonPayload = BuildIdentityPayload(machineFingerprint, revitVersion, pluginVersion);
+
+            using (var message = CreateSignedPost($"{API_URL}/plugin/config/refresh", jsonPayload))
+            using (HttpResponseMessage response = await Client.SendAsync(message).ConfigureAwait(false))
             {
-                var username = Environment.UserName;
-                string jsonPayload = $"{{\"username\":\"{username}\",\"functionName\":\"{functionName}\"}}";
-                string signature = GenerateHmacSignature(jsonPayload, PLUGIN_SECRET);
-
-                var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-                content.Headers.Add("X-Plugin-Signature", signature);
-
-                // Fire and forget (don't await in the main thread of Revit)
-                _ = client.PostAsync($"{API_URL}/usage/log", content);
+                string responseBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
+                return responseBody;
             }
-            catch { /* Ignore logging errors to prevent annoying the user */ }
+        }
+
+        public static Task SendUsageBatchAsync(
+            string commandKey,
+            string machineFingerprint,
+            string snapshotId,
+            string revitVersion = "2024",
+            string pluginVersion = "26.13.49")
+        {
+            string username = Environment.UserName ?? string.Empty;
+            string occurredAtUtc = DateTime.UtcNow.ToString("o");
+            string eventId = Guid.NewGuid().ToString("D");
+            string jsonPayload =
+                "{" +
+                $"\"pluginSlug\":\"{EscapeJson(PLUGIN_SLUG)}\"," +
+                "\"events\":[" +
+                "{" +
+                $"\"eventId\":\"{EscapeJson(eventId)}\"," +
+                $"\"commandKey\":\"{EscapeJson(commandKey)}\"," +
+                $"\"username\":\"{EscapeJson(username)}\"," +
+                $"\"machineFingerprint\":\"{EscapeJson(machineFingerprint)}\"," +
+                $"\"pluginVersion\":\"{EscapeJson(pluginVersion)}\"," +
+                $"\"revitVersion\":\"{EscapeJson(revitVersion)}\"," +
+                $"\"occurredAtUtc\":\"{EscapeJson(occurredAtUtc)}\"," +
+                $"\"snapshotId\":\"{EscapeJson(snapshotId)}\"" +
+                "}" +
+                "]" +
+                "}";
+
+            using (var message = CreateSignedPost($"{API_URL}/plugin/usage/batch", jsonPayload))
+            {
+                return Client.SendAsync(message);
+            }
+        }
+
+        private static string BuildIdentityPayload(string machineFingerprint, string revitVersion, string pluginVersion)
+        {
+            string username = Environment.UserName ?? string.Empty;
+            string machineName = Environment.MachineName ?? string.Empty;
+            return
+                "{" +
+                $"\"pluginSlug\":\"{EscapeJson(PLUGIN_SLUG)}\"," +
+                $"\"username\":\"{EscapeJson(username)}\"," +
+                $"\"machineName\":\"{EscapeJson(machineName)}\"," +
+                $"\"machineFingerprint\":\"{EscapeJson(machineFingerprint)}\"," +
+                $"\"revitVersion\":\"{EscapeJson(revitVersion)}\"," +
+                $"\"pluginVersion\":\"{EscapeJson(pluginVersion)}\"" +
+                "}";
+        }
+
+        private static HttpRequestMessage CreateSignedPost(string url, string jsonPayload)
+        {
+            string signature = GenerateHmacSignature(jsonPayload, PLUGIN_SECRET);
+            var message = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent(jsonPayload, Encoding.UTF8, "application/json"),
+            };
+            message.Headers.TryAddWithoutValidation("X-Plugin-Signature", signature);
+            return message;
         }
 
         private static string GenerateHmacSignature(string payload, string secret)
         {
-            var encoding = new UTF8Encoding();
-            byte[] keyByte = encoding.GetBytes(secret);
-            byte[] messageBytes = encoding.GetBytes(payload);
+            byte[] keyByte = Encoding.UTF8.GetBytes(secret);
+            byte[] messageBytes = Encoding.UTF8.GetBytes(payload);
 
             using (var hmacsha256 = new HMACSHA256(keyByte))
             {
                 byte[] hashmessage = hmacsha256.ComputeHash(messageBytes);
-                // The JS implementation expects a hex string
-                StringBuilder hex = new StringBuilder(hashmessage.Length * 2);
+                var hex = new StringBuilder(hashmessage.Length * 2);
                 foreach (byte b in hashmessage)
+                {
                     hex.AppendFormat("{0:x2}", b);
+                }
+
                 return hex.ToString();
             }
         }
 
-        private static bool IsCacheValid()
+        private static string EscapeJson(string value)
         {
-            if (!File.Exists(CacheFilePath)) return false;
-
-            try
-            {
-                var lastCheckedStr = File.ReadAllText(CacheFilePath);
-                if (DateTime.TryParse(lastCheckedStr, out DateTime lastChecked))
-                {
-                    // Cache is valid for 24 hours
-                    return (DateTime.UtcNow - lastChecked).TotalHours < 24;
-                }
-            }
-            catch { /* Ignore IO errors */ }
-            return false;
-        }
-
-        private static void SaveCache()
-        {
-            try
-            {
-                var dir = Path.GetDirectoryName(CacheFilePath);
-                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                File.WriteAllText(CacheFilePath, DateTime.UtcNow.ToString("o"));
-                // Optionally encrypt this file using ProtectedData.Protect for more security
-            }
-            catch { /* Ignore IO errors */ }
+            return (value ?? string.Empty)
+                .Replace("\\", "\\\\")
+                .Replace("\"", "\\\"")
+                .Replace("\r", "\\r")
+                .Replace("\n", "\\n")
+                .Replace("\t", "\\t");
         }
     }
 }
