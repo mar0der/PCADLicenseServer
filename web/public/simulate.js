@@ -1,85 +1,87 @@
-const crypto = require('crypto');
+const crypto = require("crypto");
 
-const API_URL = 'http://localhost:3000/api';
-const PLUGIN_SECRET = 'your-very-long-and-secure-random-string';
+const API_URL = "http://localhost:3000/api";
+const PLUGIN_SECRET = "your-plugin-secret-from-server-env";
+const PLUGIN_SLUG = "dokaflex";
 
-// Helper function to generate HMAC signature (matches C# logic)
 function generateSignature(payload) {
     return crypto
-        .createHmac('sha256', PLUGIN_SECRET)
+        .createHmac("sha256", PLUGIN_SECRET)
         .update(payload)
-        .digest('hex');
+        .digest("hex");
+}
+
+async function signedPost(path, payload) {
+    const body = JSON.stringify(payload);
+    const signature = generateSignature(body);
+
+    return fetch(`${API_URL}${path}`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-Plugin-Signature": signature
+        },
+        body
+    });
 }
 
 async function simulate() {
-    console.log("--- 1. Testing Authentication ---");
-    const authPayload = JSON.stringify({
-        username: "ppetkov", // Or whichever username you added to the dashboard
+    console.log("--- 1. Testing Access Snapshot Refresh ---");
+    const identity = {
+        pluginSlug: PLUGIN_SLUG,
+        username: "ppetkov",
         machineName: "DEV-PC-01",
-        revitVersion: "2024"
-    });
-
-    const authSig = generateSignature(authPayload);
-    console.log("Payload:", authPayload);
-    console.log("Signature (X-Plugin-Signature):", authSig);
+        machineFingerprint: "dev-pc-01",
+        revitVersion: "2024",
+        pluginVersion: "26.13.49"
+    };
+    console.log("Payload:", JSON.stringify(identity));
 
     try {
-        const authRes = await fetch(`${API_URL}/auth/verify`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-Plugin-Signature": authSig
-            },
-            body: authPayload
-        });
-
-        const authData = await authRes.json();
-        console.log("Status:", authRes.status);
-        console.log("Response:", authData);
-
-        if (authRes.status === 200) {
-            console.log("\n✅ Plugin would now load Revit Ribbon UI!");
-        } else {
-            console.log("\n❌ Plugin would NOT load Ribbon UI.");
-        }
-
+        const accessRes = await signedPost("/plugin/access/refresh", identity);
+        const accessData = await accessRes.json();
+        console.log("Status:", accessRes.status);
+        console.log("Snapshot format:", accessData.format);
+        console.log("Allowed commands:", accessData.payload?.allowedCommandKeys?.length ?? 0);
     } catch (err) {
-        console.error("Auth Request Failed:", err);
+        console.error("Access Refresh Failed:", err);
     }
 
-    console.log("\n--- 2. Testing Usage Logging ---");
-    const logPayload = JSON.stringify({
-        username: "ppetkov",
-        functionName: "ExportToExcel_Simulated"
-    });
+    console.log("\n--- 2. Testing Plugin Config Refresh ---");
+    try {
+        const configRes = await signedPost("/plugin/config/refresh", identity);
+        const configData = await configRes.json();
+        console.log("Status:", configRes.status);
+        console.log("Command count:", configData.payload?.commands?.length ?? 0);
+        console.log("Ribbon tabs:", configData.payload?.ribbonTabs?.length ?? 0);
+    } catch (err) {
+        console.error("Config Refresh Failed:", err);
+    }
 
-    const logSig = generateSignature(logPayload);
-    console.log("Payload:", logPayload);
+    console.log("\n--- 3. Testing Usage Batch ---");
+    const usagePayload = {
+        pluginSlug: PLUGIN_SLUG,
+        events: [
+            {
+                eventId: crypto.randomUUID(),
+                commandKey: "DF.GENERATE_BEAM",
+                username: "ppetkov",
+                machineFingerprint: "dev-pc-01",
+                pluginVersion: "26.13.49",
+                revitVersion: "2024",
+                occurredAtUtc: new Date().toISOString(),
+                snapshotId: crypto.randomUUID()
+            }
+        ]
+    };
+    console.log("Payload:", JSON.stringify(usagePayload));
 
     try {
-        const logRes = await fetch(`${API_URL}/usage/log`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-Plugin-Signature": logSig
-            },
-            body: logPayload
-        });
-
-        console.log("Status:", logRes.status);
-        const logText = await logRes.text();
-        console.log("Response:", logText);
-
-        if (logRes.status === 200) {
-            if (logText === 'Logged') {
-                console.log("✅ Tool usage recorded successfully! Check the dashboard.");
-            } else {
-                console.log("❌ Tool usage was IGNORED by server (User disabled or missing).");
-            }
-        }
-
+        const usageRes = await signedPost("/plugin/usage/batch", usagePayload);
+        console.log("Status:", usageRes.status);
+        console.log("Response:", await usageRes.json());
     } catch (err) {
-        console.error("Log Request Failed:", err);
+        console.error("Usage Batch Failed:", err);
     }
 }
 
